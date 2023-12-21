@@ -36,3 +36,7 @@ class UnknownEncoderError(KloppyError):
 
 class KloppyParameterError(KloppyError):
     pass
+
+
+class SynchronizationError(KloppyError):
+    pass

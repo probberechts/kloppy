@@ -1,3 +1,4 @@
+import sys
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum
@@ -11,6 +12,11 @@ from typing import (
     Optional,
     TYPE_CHECKING,
 )
+
+if sys.version_info >= (3, 11):
+    from typing import Self
+else:
+    from typing_extensions import Self
 
 from kloppy.domain.models.common import DatasetType
 from kloppy.utils import (
@@ -1071,6 +1077,14 @@ class EventDataset(Dataset[Event]):
         return pd.DataFrame.from_records(
             map(generic_record_converter, self.records)
         )
+
+    def sync(self, *args, **kwargs) -> Self:
+        """
+        See [sync][kloppy.helpers.sync]
+        """
+        from kloppy.helpers import sync
+
+        return sync(self, *args, **kwargs)
 
 
 __all__ = [

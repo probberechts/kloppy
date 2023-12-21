@@ -761,8 +761,8 @@ class DataRecord(ABC):
     """
 
     dataset: "Dataset" = field(init=False)
-    prev_record: Optional["DataRecord"] = field(init=False)
-    next_record: Optional["DataRecord"] = field(init=False)
+    prev_record: Optional[Self] = field(init=False)
+    next_record: Optional[Self] = field(init=False)
     period: Period
     timestamp: float
     ball_owning_team: Optional[Team]
@@ -776,8 +776,8 @@ class DataRecord(ABC):
     def set_refs(
         self,
         dataset: "Dataset",
-        prev: Optional["DataRecord"],
-        next_: Optional["DataRecord"],
+        prev: Optional[Self],
+        next_: Optional[Self],
     ):
         if hasattr(self, "dataset"):
             # TODO: determine if next/prev record should be affected
@@ -900,7 +900,7 @@ class Dataset(ABC, Generic[T]):
     ) -> "DataFrame":
         pass
 
-    def transform(self, *args, **kwargs):
+    def transform(self, *args, **kwargs) -> Self:
         """
         See [transform][kloppy.helpers.transform]
         """

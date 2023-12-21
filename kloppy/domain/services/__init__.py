@@ -2,6 +2,12 @@ from typing import List
 
 from kloppy.domain import AttackingDirection, Frame, Ground
 
+from .synchronizers import (
+    EventTrackingSynchronizer,
+    SynchronizationStrategy,
+    SynchronizationStrategyBuilder,
+    create_synchronization_strategy,
+)
 from .transformers import DatasetTransformer, DatasetTransformerBuilder
 from .event_factory import EventFactory, create_event
 

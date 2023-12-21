@@ -1,16 +1,23 @@
-from typing import Union, Optional
+from typing import Union, Optional, Literal, TypeVar, Type
 from collections.abc import Sequence
 
 from .domain import (
     Dataset,
+    EventDataset,
+    TrackingDataset,
     Dimension,
     Orientation,
     PitchDimensions,
+    EventTrackingSynchronizer,
+    SynchronizationStrategy,
+    create_synchronization_strategy,
     DatasetTransformer,
     Provider,
     build_coordinate_system,
     CoordinateSystem,
 )
+
+T = TypeVar("T", bound=Dataset)
 
 
 def transform(
@@ -54,4 +61,33 @@ def transform(
         to_orientation=to_orientation,
         to_coordinate_system=to_coordinate_system,
         to_pitch_dimensions=to_pitch_dimensions,
+    )
+
+
+def sync(
+    from_dataset: T,
+    to_dataset: Dataset,
+    strategy: Union[str, SynchronizationStrategy] = "default",
+    offset: Optional[Union[float, Literal["auto"]]] = "auto",
+    show_progress: bool = False,
+    **kwargs,
+) -> Type[T]:
+    """Synchronize two datasets."""
+    if not (
+        isinstance(from_dataset, EventDataset)
+        and isinstance(to_dataset, TrackingDataset)
+    ):
+        raise NotImplementedError(
+            "You can only synchronize an event dataset with a tracking dataset."
+        )
+    if isinstance(strategy, str):
+        strategy_obj = create_synchronization_strategy(strategy)
+    else:
+        strategy_obj = strategy
+
+    strategy_obj.configure(**kwargs)
+
+    synchronizer = EventTrackingSynchronizer(strategy=strategy_obj)
+    return synchronizer.sync(
+        from_dataset, to_dataset, offset=offset, show_progress=show_progress
     )
