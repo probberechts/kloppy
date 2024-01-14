@@ -48,7 +48,7 @@ strategy = (
     .with_window_fn(window_fn)
     .with_mask_fn(mask_fn)
     .with_score_fn(score_fn)
-    .with_alignment_fn(alignment.optimal_alignment)
+    .with_alignment_fn(partial(alignment.optimal_alignment, max_score=15))
     .build()
 )
 strategy.register("default")

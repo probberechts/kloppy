@@ -104,7 +104,7 @@ def greedy_alignment(
     ],
     mask_fn: Callable[[Event, List[Frame]], List[bool]],
     window_fn: Callable[[Event], float],
-    offset: float = 0,
+    offset: float = np.inf,
 ):
     """Greedy sequence alignment."""
     c = len(s2)
@@ -141,12 +141,14 @@ def optimal_alignment(
     mask_fn: Callable[[Event, List[Frame]], List[bool]],
     window_fn: Callable[[Event], float],
     offset: float = 0,
+    max_score: float = 10,
 ):
     """Optimal sequence alignment using dynamic programming."""
     r, c = len(s1), len(s2)
     # Init scoring matrix
     scores = np.full((r + 1, c + 1), np.inf)
     scores[0, :] = 0
+    scores[1:, 0] = np.cumsum([max_score] * r)
 
     # Init traceback matrix
     paths = np.full([r + 1, c + 1], Direction.LEFT.value, dtype="<U4")
@@ -171,26 +173,38 @@ def optimal_alignment(
             from_diag_score = (
                 d_scores[j0 - frames_to_check.start] + scores[i, j1]
             )  # representing a match
-            scores[i1, j1] = min(from_left_score, from_diag_score)
+            from_up_score = (
+                max_score + scores[i, j1]
+            )  # representing a deletion in the event sequence
+            scores[i1, j1] = min(
+                from_left_score, from_diag_score, from_up_score
+            )
             # make note of which cell was best in the traceback array
             if scores[i1, j1] == from_left_score:
                 paths[i1, j1] = Direction.LEFT.value
             elif scores[i1, j1] == from_diag_score:
                 paths[i1, j1] = Direction.UP_LEFT.value
+            elif scores[i1, j1] == from_up_score:
+                paths[i1, j1] = Direction.UP.value
         scores[i1, j1:] = scores[i1, j1]
 
     # Traceback to find the optimal path
     p = []
-    ops = {Direction.UP_LEFT.value: (-1, -0), Direction.LEFT.value: (-0, -1)}
+    ops = {
+        Direction.UP_LEFT.value: (-1, -0, True),
+        Direction.LEFT.value: (-0, -1, False),
+        Direction.UP.value: (-1, -0, False),
+    }
     i, j = int(paths.shape[0] - 1), int(paths.shape[1] - 1)
     while i > 0 and (paths[i] == Direction.LEFT.value).all():
         i -= 1
         p.append((i, None))
     while i > 0 and j > 0:
-        opi, opj = ops[paths[i, j]]
+        opi, opj, match = ops[paths[i, j]]
         i, j = i + opi, j + opj
         if opi < 0:
-            p.append((i, j - 1))
+            if match:
+                p.append((i, j - 1))
             while (paths[i] == Direction.LEFT.value).all():
                 i -= 1
                 p.append((i, None))
