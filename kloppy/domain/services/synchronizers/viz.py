@@ -2,7 +2,11 @@
 import math
 from collections import defaultdict
 
-from kloppy.domain import DatasetTransformer, TrackingDataset
+from kloppy.domain import (
+    DatasetTransformer,
+    TrackingDataset,
+    UEFACoordinateSystem,
+)
 
 from . import utils
 
@@ -371,7 +375,7 @@ def animate_score(
     # to compute the score, but it is not very clean
     transformer = DatasetTransformer(
         from_coordinate_system=coordinate_system,
-        to_coordinate_system=utils.UEFACoordinateSystem(normalized=False),
+        to_coordinate_system=UEFACoordinateSystem(normalized=False),
     )
     norm_event = transformer.transform_event(event)
     norm_event.prev_record = event.prev_record

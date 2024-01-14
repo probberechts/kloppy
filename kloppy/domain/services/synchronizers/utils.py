@@ -1,63 +1,80 @@
 import math
 import random
-
-from dataclasses import dataclass, replace
+from dataclasses import replace
 
 from kloppy.domain import (
-    CoordinateSystem,
-    Dimension,
     Orientation,
-    Origin,
-    PitchDimensions,
     Point,
-    Provider,
-    VerticalOrientation,
+    EventDataset,
+    TrackingDataset,
+    SkillCornerCoordinateSystem,
+    SportecTrackingDataCoordinateSystem,
+    SportecEventDataCoordinateSystem,
+    SecondSpectrumCoordinateSystem,
+    UEFACoordinateSystem,
 )
 
 
-@dataclass
-class UEFACoordinateSystem(CoordinateSystem):
-    """UEFA coordinate system.
+def normalize_datasets(events: EventDataset, frames: TrackingDataset):
+    """Transform the events and frames to the same metric coordinate system.
 
-    This coordinate system has the origin on the bottom left of the pitch, and
-    a uniform field of 105m x 68m.
+    To be able to compute distances, we need to transform the events and frames
+    to the same coordinate system with metric pitch dimensions and orientation.
+
+    If the coordinate system of the events and frames are already compatible,
+    this function will return a copy of the events.
     """
-
-    @property
-    def provider(self) -> Provider:
-        return Provider.OTHER
-
-    @property
-    def origin(self) -> Origin:
-        return Origin.BOTTOM_LEFT
-
-    @property
-    def vertical_orientation(self) -> VerticalOrientation:
-        return VerticalOrientation.BOTTOM_TO_TOP
-
-    @property
-    def pitch_dimensions(self) -> PitchDimensions:
-        return PitchDimensions(
-            x_dim=Dimension(0, 105),
-            y_dim=Dimension(0, 68),
+    metric_coordinate_systems = (
+        SkillCornerCoordinateSystem,
+        SportecTrackingDataCoordinateSystem,
+        SportecEventDataCoordinateSystem,
+        SecondSpectrumCoordinateSystem,
+        UEFACoordinateSystem,
+    )
+    if (
+        events.metadata.coordinate_system != frames.metadata.coordinate_system
+        or events.metadata.orientation != frames.metadata.orientation
+        or not isinstance(
+            events.metadata.coordinate_system, metric_coordinate_systems
         )
+        or events.metadata.orientation
+        in (Orientation.ACTION_EXECUTING_TEAM, Orientation.BALL_OWNING_TEAM)
+    ):
+        # determine the cheapest transformation to a common coordinate system
+        # and orientation. Since transforming frames is more expensive than
+        # transforming events, we try to keep the coordinate system and
+        # orientation of the frames.
+        if not isinstance(
+            frames.metadata.coordinate_system, metric_coordinate_systems
+        ):
+            to_coordinate_system = UEFACoordinateSystem(normalized=False)
+        else:
+            to_coordinate_system = frames.metadata.coordinate_system
+        if frames.metadata.orientation in (
+            Orientation.ACTION_EXECUTING_TEAM,
+            Orientation.BALL_OWNING_TEAM,
+        ):
+            to_orientation = Orientation.FIXED_HOME_AWAY
+        else:
+            to_orientation = frames.metadata.orientation
 
+        events_norm = events.transform(
+            to_coordinate_system=to_coordinate_system,
+            to_orientation=to_orientation,
+        )
+        frames_norm = frames.transform(
+            to_coordinate_system=to_coordinate_system,
+            to_orientation=to_orientation,
+        )
+        return events_norm, frames_norm
 
-def normalize_datasets(events, frames):
-    # Transform the events and frames to the same coordinate system
-    # and orientation with true pitch dimensions. We use the
-    # UEFACoordinateSystem such that we can compute correct distances.
-    # This also makes a copy of the event dataset such that we do not
-    # modify the original dataset.
-    events_norm = events.transform(
-        to_coordinate_system=UEFACoordinateSystem(normalized=False),
-        to_orientation=Orientation.FIXED_HOME_AWAY,
+    return (
+        EventDataset(
+            metadata=events.metadata,
+            records=[replace(e) for e in events.records],
+        ),
+        frames,
     )
-    frames_norm = frames.transform(
-        to_coordinate_system=UEFACoordinateSystem(normalized=False),
-        to_orientation=Orientation.FIXED_HOME_AWAY,
-    )
-    return events_norm, frames_norm
 
 
 def eucl(a: Point, b: Point) -> float:
