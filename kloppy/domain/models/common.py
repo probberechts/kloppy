@@ -84,6 +84,8 @@ class Provider(Enum):
         KLOPPY:
         DATAFACTORY:
         STATSPERFORM:
+        UEFA:
+        OTHER:
     """
 
     METRICA = "metrica"
@@ -97,6 +99,7 @@ class Provider(Enum):
     KLOPPY = "kloppy"
     DATAFACTORY = "datafactory"
     STATSPERFORM = "statsperform"
+    UEFA = "uefa"
     OTHER = "other"
 
     def __str__(self):
@@ -683,6 +686,34 @@ class StatsPerformCoordinateSystem(CoordinateSystem):
         )
 
 
+@dataclass
+class UEFACoordinateSystem(CoordinateSystem):
+    """UEFA coordinate system.
+
+    This coordinate system has the origin on the bottom left of the pitch, and
+    a uniform field of 105m x 68m.
+    """
+
+    @property
+    def provider(self) -> Provider:
+        return Provider.OTHER
+
+    @property
+    def origin(self) -> Origin:
+        return Origin.BOTTOM_LEFT
+
+    @property
+    def vertical_orientation(self) -> VerticalOrientation:
+        return VerticalOrientation.BOTTOM_TO_TOP
+
+    @property
+    def pitch_dimensions(self) -> PitchDimensions:
+        return PitchDimensions(
+            x_dim=Dimension(0, 105),
+            y_dim=Dimension(0, 68),
+        )
+
+
 class DatasetType(Enum):
     """
     DatasetType
@@ -741,6 +772,9 @@ def build_coordinate_system(
 
     if provider == Provider.STATSPERFORM:
         return StatsPerformCoordinateSystem(normalized=False, **kwargs)
+
+    if provider == Provider.UEFA:
+        return UEFACoordinateSystem(normalized=False, **kwargs)
 
 
 class DatasetFlag(Flag):
