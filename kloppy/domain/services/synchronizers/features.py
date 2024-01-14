@@ -135,18 +135,18 @@ def ball_speed(
         return _smooth_ma(func, window)(frame)
 
     # compute speed for current frame
-    prev_frame = frame.prev_record
-    if prev_frame is None:
+    next_frame = frame.next_record
+    if next_frame is None:
         return float("nan")
     ball_coords = frame.ball_coordinates
-    prev_ball_coords = prev_frame.ball_coordinates
+    next_ball_coords = next_frame.ball_coordinates
     timestamp = frame.timestamp
-    prev_timestamp = prev_frame.timestamp
-    if ball_coords is None or prev_ball_coords is None:
+    next_timestamp = next_frame.timestamp
+    if ball_coords is None or next_ball_coords is None:
         return float("nan")
 
-    dist = eucl(ball_coords, prev_ball_coords)
-    dt = timestamp - prev_timestamp
+    dist = eucl(ball_coords, next_ball_coords)
+    dt = next_timestamp - timestamp
     speed = dist / dt if dt > 0 else float("nan")
 
     if max_speed is not None and speed > max_speed:
@@ -235,21 +235,21 @@ def player_speed(
         return _smooth_ma(func, window)(frame)
 
     # compute speed for current frame
-    prev_frame = frame.prev_record
-    if prev_frame is None:
+    next_frame = frame.next_record
+    if next_frame is None:
         return float("nan")
-    prev_player_data = _get_player_data(prev_frame, player)
-    if prev_player_data is None:
+    next_player_data = _get_player_data(next_frame, player)
+    if next_player_data is None:
         return float("nan")
     player_coords = player_data.coordinates
-    prev_player_coords = prev_player_data.coordinates
+    next_player_coords = next_player_data.coordinates
     timestamp = frame.timestamp
-    prev_timestamp = prev_frame.timestamp
-    if player_coords is None or prev_player_coords is None:
+    next_timestamp = next_frame.timestamp
+    if player_coords is None or next_player_coords is None:
         return float("nan")
 
-    dist = eucl(player_coords, prev_player_coords)
-    dt = timestamp - prev_timestamp
+    dist = eucl(player_coords, next_player_coords)
+    dt = next_timestamp - timestamp
     speed = dist / dt if dt > 0 else float("nan")
 
     if max_speed is not None and speed > max_speed:
@@ -369,15 +369,15 @@ def speed_player_ball(
         func = partial(speed_player_ball, player=player, max_speed=max_speed)
         return _smooth_ma(func, window)(frame)
 
-    prev_frame = frame.prev_record
-    if prev_frame is None:
+    next_frame = frame.next_record
+    if next_frame is None:
         return float("nan")
     dist = dist_player_ball(frame, player)
-    prev_dist = dist_player_ball(prev_frame, player)
+    next_dist = dist_player_ball(next_frame, player)
     timestamp = frame.timestamp
-    prev_timestamp = prev_frame.timestamp
-    ddist = dist - prev_dist
-    dt = timestamp - prev_timestamp
+    next_timestamp = next_frame.timestamp
+    ddist = next_dist - dist
+    dt = next_timestamp - timestamp
     speed = ddist / dt if dt > 0 else float("nan")
     return max(abs(speed), 1e-10)  # avoid zero
 
