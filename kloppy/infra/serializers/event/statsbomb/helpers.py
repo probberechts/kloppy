@@ -14,7 +14,13 @@ from kloppy.domain import (
 from kloppy.exceptions import DeserializationError
 
 
-def parse_str_ts(timestamp: str) -> float:
+def parse_football_clock_str_ts(timestamp: str) -> timedelta:
+    """Parse a mm:ss string football time into number of seconds."""
+    m, s = timestamp.split(":")
+    return timedelta(seconds=int(m) * 60 + float(s))
+
+
+def parse_str_ts(timestamp: str) -> timedelta:
     """Parse a HH:mm:ss string timestamp into number of seconds."""
     h, m, s = timestamp.split(":")
     return timedelta(seconds=int(h) * 3600 + int(m) * 60 + float(s))
@@ -92,8 +98,8 @@ def parse_freeze_frame(
             return team.get_player_by_id(player_data["player"]["id"])
         elif player_data.get("actor"):
             return event.player
-        elif player_data.get("keeper"):
-            return team.get_player_by_position(position_id=1)
+        # elif player_data.get("keeper"):
+        #     return team.get_player_by_position(position_id=1)
         else:
             return Player(
                 player_id=f"T{team.team_id}-E{event.event_id}-{i}",

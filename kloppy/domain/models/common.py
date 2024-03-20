@@ -20,9 +20,9 @@ from typing import (
 
 
 if sys.version_info >= (3, 8):
-    from typing import Literal
+    from typing import Literal, TypedDict
 else:
-    from typing_extensions import Literal
+    from typing_extensions import Literal, TypedDict
 
 if sys.version_info >= (3, 11):
     from typing import Self
@@ -139,7 +139,7 @@ class Player:
 
     # match specific
     starting: bool = None
-    position: Position = None
+    positions: List["PositionTimeFrame"] = field(default_factory=list)
 
     attributes: Optional[Dict] = field(default_factory=dict, compare=False)
 
@@ -150,6 +150,50 @@ class Player:
         if self.first_name or self.last_name:
             return f"{self.first_name} {self.last_name}"
         return f"{self.team.ground}_{self.jersey_no}"
+
+    @property
+    def starting_position(self):
+        if self.positions:
+            return self.positions[0]
+
+    def position(self, period: "Period", timestamp: float):
+        # Iterate through positions and find the one that matches the period and timestamp
+        for position in self.positions:
+            # Check if the current period is the same as the position's start period
+            # and if the timestamp is greater or equal to the position's start timestamp
+            in_start_period = (
+                position["start"]["period_id"] == period.id
+                and timestamp >= position["start"]["timestamp"]
+            )
+
+            # Check if the current period is the same as the position's end period
+            # and if the timestamp is less or equal to the position's end timestamp
+            in_end_period = (
+                position["end"]["period_id"] == period.id
+                and timestamp <= position["end"]["timestamp"]
+            )
+
+            # Check if the current period is after the position's start period
+            # and before the position's end period
+            in_between_periods = (
+                position["start"]["period_id"]
+                < period.id
+                < position["end"]["period_id"]
+            )
+
+            if in_start_period or in_end_period or in_between_periods:
+                return position["position"]
+
+        # return next(
+        #     position["position"]
+        #     for position in self.positions
+        #     if position["start"]["period_id"]
+        #     <= period.id
+        #     <= position["end"]["period_id"]
+        #     and position["start"]["timestamp"]
+        #     <= timestamp
+        #     <= position["end"]["timestamp"]
+        # )
 
     def __str__(self):
         return self.full_name
@@ -200,13 +244,13 @@ class Team:
 
         return None
 
-    def get_player_by_position(self, position_id: Union[int, str]):
-        position_id = str(position_id)
-        for player in self.players:
-            if player.position and player.position.position_id == position_id:
-                return player
-
-        return None
+    # def get_player_by_position(self, position_id: Union[int, str]):
+    #     position_id = str(position_id)
+    #     for player in self.players:
+    #         if player.position and player.position.position_id == position_id:
+    #             return player
+    #
+    #     return None
 
     def get_player_by_id(self, player_id: Union[int, str]):
         player_id = str(player_id)
@@ -270,6 +314,17 @@ class Period:
 
     def __eq__(self, other):
         return isinstance(other, Period) and other.id == self.id
+
+
+class TimePoint(TypedDict):
+    period_id: int
+    timestamp: timedelta
+
+
+class PositionTimeFrame(TypedDict):
+    start: TimePoint
+    end: TimePoint
+    position: Position
 
 
 class Orientation(Enum):
