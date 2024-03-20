@@ -92,8 +92,8 @@ def parse_freeze_frame(
             return team.get_player_by_id(player_data["player"]["id"])
         elif player_data.get("actor"):
             return event.player
-        elif player_data.get("keeper"):
-            return team.get_player_by_position(position_id=1)
+        # elif player_data.get("keeper"):
+        #     return team.get_player_by_position(position_id=1)
         else:
             return Player(
                 player_id=f"T{team.team_id}-E{event.event_id}-{i}",

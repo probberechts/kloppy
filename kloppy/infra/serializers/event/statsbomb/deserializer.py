@@ -15,6 +15,8 @@ from kloppy.domain import (
     Position,
     Provider,
     Team,
+    PositionTimeFrame,
+    TimePoint,
 )
 from kloppy.exceptions import DeserializationError
 from kloppy.infra.serializers.event.deserializer import EventDataDeserializer
@@ -54,14 +56,13 @@ class StatsBombDeserializer(EventDataDeserializer[StatsBombInputs]):
             data_version.shot_fidelity_version,
             data_version.xy_fidelity_version,
         )
-
-        # Create teams and players
-        with performance_logging("parse teams ans players", logger=logger):
-            teams = self.create_teams_and_players(raw_events, lineups)
-
         # Create periods
         with performance_logging("parse periods", logger=logger):
             periods = self.create_periods(raw_events)
+
+        # Create teams and players
+        with performance_logging("parse teams ans players", logger=logger):
+            teams = self.create_teams_and_players(raw_events, lineups, periods)
 
         # Create events
         with performance_logging("parse events", logger=logger):
@@ -160,7 +161,7 @@ class StatsBombDeserializer(EventDataDeserializer[StatsBombInputs]):
 
         return raw_events, lineups, three_sixty_data, version
 
-    def create_teams_and_players(self, raw_events, lineups):
+    def create_teams_and_players(self, raw_events, lineups, periods):
         it_events = iter(raw_events.values())
         starting_xi_events = [
             next(it_events).raw_event,
@@ -175,14 +176,43 @@ class StatsBombDeserializer(EventDataDeserializer[StatsBombInputs]):
         )
 
         # Create players and teams
-        player_positions = {
-            str(player["player"]["id"]): Position(
-                position_id=str(player["position"]["id"]),
-                name=player["position"]["name"],
-            )
-            for raw_event in starting_xi_events
-            for player in raw_event["tactics"]["lineup"]
-        }
+        players_positions = {}
+        for lineup in lineups:
+            for player in lineup["lineup"]:
+                player_position_time_frames = []
+                for position in player["positions"]:
+                    start_timestamp = int(position["from"][:2]) * 60 + int(
+                        position["from"][3:]
+                    )
+                    end_period_id = (
+                        position["to_period"]
+                        if position["to_period"]
+                        else periods[-1].id
+                    )
+                    end_timestamp = (
+                        int(position["to"][:2]) * 60 + int(position["to"][3:])
+                        if position["to"]
+                        else periods[-1].end_timestamp
+                    )
+                    player_position_time_frames.append(
+                        PositionTimeFrame(
+                            start=TimePoint(
+                                period_id=position["from_period"],
+                                timestamp=start_timestamp,
+                            ),
+                            end=TimePoint(
+                                period_id=end_period_id,
+                                timestamp=end_timestamp,
+                            ),
+                            position=Position(
+                                position_id=str(position["position_id"]),
+                                name=position["position"],
+                            ),
+                        )
+                    )
+                players_positions[
+                    str(player["player_id"])
+                ] = player_position_time_frames
 
         starting_formations = {
             raw_event["team"]["id"]: FormationType(
@@ -204,8 +234,8 @@ class StatsBombDeserializer(EventDataDeserializer[StatsBombInputs]):
                     team=team,
                     name=player["player_name"],
                     jersey_no=int(player["jersey_number"]),
-                    starting=str(player["player_id"]) in player_positions,
-                    position=player_positions.get(str(player["player_id"])),
+                    starting=str(player["player_id"]) in players_positions,
+                    positions=players_positions.get(str(player["player_id"])),
                 )
                 for player in lineup["lineup"]
             ]
