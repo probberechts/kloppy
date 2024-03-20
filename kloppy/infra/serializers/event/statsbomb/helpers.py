@@ -14,7 +14,13 @@ from kloppy.domain import (
 from kloppy.exceptions import DeserializationError
 
 
-def parse_str_ts(timestamp: str) -> float:
+def parse_football_clock_str_ts(timestamp: str) -> timedelta:
+    """Parse a mm:ss string football time into number of seconds."""
+    m, s = timestamp.split(":")
+    return timedelta(seconds=int(m) * 60 + float(s))
+
+
+def parse_str_ts(timestamp: str) -> timedelta:
     """Parse a HH:mm:ss string timestamp into number of seconds."""
     h, m, s = timestamp.split(":")
     return timedelta(seconds=int(h) * 3600 + int(m) * 60 + float(s))

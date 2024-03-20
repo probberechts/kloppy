@@ -22,7 +22,11 @@ from kloppy.exceptions import DeserializationError
 from kloppy.infra.serializers.event.deserializer import EventDataDeserializer
 from kloppy.utils import performance_logging
 from . import specification as SB
-from .helpers import parse_freeze_frame, parse_str_ts
+from .helpers import (
+    parse_freeze_frame,
+    parse_str_ts,
+    parse_football_clock_str_ts,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -181,8 +185,8 @@ class StatsBombDeserializer(EventDataDeserializer[StatsBombInputs]):
             for player in lineup["lineup"]:
                 player_position_time_frames = []
                 for position in player["positions"]:
-                    start_timestamp = int(position["from"][:2]) * 60 + int(
-                        position["from"][3:]
+                    start_timestamp = parse_football_clock_str_ts(
+                        position["from"]
                     )
                     end_period_id = (
                         position["to_period"]
@@ -190,7 +194,7 @@ class StatsBombDeserializer(EventDataDeserializer[StatsBombInputs]):
                         else periods[-1].id
                     )
                     end_timestamp = (
-                        int(position["to"][:2]) * 60 + int(position["to"][3:])
+                        parse_football_clock_str_ts(position["to"])
                         if position["to"]
                         else periods[-1].end_timestamp
                     )
