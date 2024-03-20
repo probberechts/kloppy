@@ -2,7 +2,7 @@ import pytest
 
 from datetime import timedelta
 from kloppy import statsbomb
-from kloppy.domain import EventDataset, Position
+from kloppy.domain import EventDataset, Position, Period
 
 API_URL = "https://raw.githubusercontent.com/statsbomb/open-data/master/data/"
 
@@ -106,4 +106,20 @@ class TestPlayer:
         ]
         assert multi_positions_player.starting_position == Position(
             position_id="17", name="Right Wing", coordinates=None
+        )
+
+        period_2 = Period(
+            id=2,
+            start_timestamp=timedelta(seconds=2858, microseconds=122000),
+            end_timestamp=timedelta(seconds=5887, microseconds=760000),
+        )
+        assert multi_positions_player.position(
+            period_2, timedelta(seconds=3314)
+        ) == Position(position_id="17", name="Right Wing", coordinates=None)
+        assert multi_positions_player.position(
+            period_2, timedelta(seconds=3540)
+        ) == Position(
+            position_id="13",
+            name="Right Center Midfield",
+            coordinates=None,
         )

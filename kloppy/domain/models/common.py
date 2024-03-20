@@ -159,29 +159,20 @@ class Player:
     def position(self, period: "Period", timestamp: float):
         # Iterate through positions and find the one that matches the period and timestamp
         for position in self.positions:
-            # Check if the current period is the same as the position's start period
-            # and if the timestamp is greater or equal to the position's start timestamp
-            in_start_period = (
-                position["start"]["period_id"] == period.id
-                and timestamp >= position["start"]["timestamp"]
-            )
+            start_period = position["start"]["period_id"]
+            end_period = position["end"]["period_id"]
+            start_timestamp = position["start"]["timestamp"]
+            end_timestamp = position["end"]["timestamp"]
 
-            # Check if the current period is the same as the position's end period
-            # and if the timestamp is less or equal to the position's end timestamp
-            in_end_period = (
-                position["end"]["period_id"] == period.id
-                and timestamp <= position["end"]["timestamp"]
-            )
-
-            # Check if the current period is after the position's start period
-            # and before the position's end period
-            in_between_periods = (
-                position["start"]["period_id"]
-                < period.id
-                < position["end"]["period_id"]
-            )
-
-            if in_start_period or in_end_period or in_between_periods:
+            # If the position period covers the provided period
+            if start_period <= period.id <= end_period:
+                # If within the same start period, check if timestamp is after start timestamp
+                if period.id == start_period and timestamp < start_timestamp:
+                    continue
+                # If within the same end period, check if timestamp is before end timestamp
+                if period.id == end_period and timestamp > end_timestamp:
+                    continue
+                # If period is in between start and end periods, the timestamps are valid
                 return position["position"]
 
     def __str__(self):
