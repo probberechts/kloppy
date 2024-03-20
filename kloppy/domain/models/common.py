@@ -154,7 +154,7 @@ class Player:
     @property
     def starting_position(self):
         if self.positions:
-            return self.positions[0]
+            return self.positions[0]["position"]
 
     def position(self, period: "Period", timestamp: float):
         # Iterate through positions and find the one that matches the period and timestamp
@@ -183,17 +183,6 @@ class Player:
 
             if in_start_period or in_end_period or in_between_periods:
                 return position["position"]
-
-        # return next(
-        #     position["position"]
-        #     for position in self.positions
-        #     if position["start"]["period_id"]
-        #     <= period.id
-        #     <= position["end"]["period_id"]
-        #     and position["start"]["timestamp"]
-        #     <= timestamp
-        #     <= position["end"]["timestamp"]
-        # )
 
     def __str__(self):
         return self.full_name
