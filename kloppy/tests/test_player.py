@@ -29,74 +29,56 @@ class TestPlayer:
         away_team = dataset.metadata.teams[1]
         # Full time player
         full_time_player = home_team.get_player_by_id("2954")
-        assert full_time_player.positions == [
+        assert full_time_player.position_changes == [
             {
-                "end": {
-                    "period_id": 2,
-                    "timestamp": timedelta(seconds=5887, microseconds=760000),
-                },
+                "timestamp": timedelta(0),
+                "period_id": 1,
                 "position": Position(
                     position_id="9",
                     name="Right Defensive Midfield",
                     coordinates=None,
                 ),
-                "start": {"period_id": 1, "timestamp": timedelta(0)},
             }
         ]
         # Substituted off player
         sub_off_player = dataset.metadata.teams[0].get_player_by_id("3089")
-        assert sub_off_player.positions == [
+        assert sub_off_player.position_changes == [
             {
-                "end": {"period_id": 2, "timestamp": timedelta(seconds=2856)},
+                "period_id": 1,
                 "position": Position(
                     position_id="18",
                     name="Right Attacking Midfield",
                     coordinates=None,
                 ),
-                "start": {"period_id": 1, "timestamp": timedelta(0)},
+                "timestamp": timedelta(0),
             }
         ]
         # Substituted on player
         sub_on_player = dataset.metadata.teams[0].get_player_by_id("5630")
-        assert sub_on_player.positions == [
+        assert sub_on_player.position_changes == [
             {
-                "start": {
-                    "period_id": 2,
-                    "timestamp": timedelta(seconds=2856),
-                },
-                "end": {
-                    "period_id": 2,
-                    "timestamp": timedelta(seconds=5887, microseconds=760000),
-                },
+                "period_id": 2,
                 "position": Position(
                     position_id="18",
                     name="Right Attacking Midfield",
                     coordinates=None,
                 ),
+                "timestamp": timedelta(seconds=2856),
             }
         ]
         # Player with multiple positions
         multi_positions_player = away_team.get_player_by_id("5204")
-        assert multi_positions_player.positions == [
+        assert multi_positions_player.position_changes == [
             {
-                "start": {
-                    "period_id": 2,
-                    "timestamp": timedelta(seconds=3313),
-                },
-                "end": {"period_id": 2, "timestamp": timedelta(seconds=3539)},
+                "timestamp": timedelta(seconds=3313),
+                "period_id": 2,
                 "position": Position(
                     position_id="17", name="Right Wing", coordinates=None
                 ),
             },
             {
-                "start": {
-                    "period_id": 2,
-                    "timestamp": timedelta(seconds=3539),
-                },
-                "end": {
-                    "period_id": 2,
-                    "timestamp": timedelta(seconds=5887, microseconds=760000),
-                },
+                "timestamp": timedelta(seconds=3539),
+                "period_id": 2,
                 "position": Position(
                     position_id="13",
                     name="Right Center Midfield",

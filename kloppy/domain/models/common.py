@@ -139,7 +139,7 @@ class Player:
 
     # match specific
     starting: bool = None
-    positions: List["PositionTimeFrame"] = field(default_factory=list)
+    position_changes: List[Dict[str, Any]] = field(default_factory=list)
 
     attributes: Optional[Dict] = field(default_factory=dict, compare=False)
 
@@ -153,27 +153,19 @@ class Player:
 
     @property
     def starting_position(self):
-        if self.positions:
-            return self.positions[0]["position"]
+        if self.position_changes:
+            return self.position_changes[0]["position"]
 
     def position(self, period: "Period", timestamp: float):
-        # Iterate through positions and find the one that matches the period and timestamp
-        for position in self.positions:
-            start_period = position["start"]["period_id"]
-            end_period = position["end"]["period_id"]
-            start_timestamp = position["start"]["timestamp"]
-            end_timestamp = position["end"]["timestamp"]
+        position = self.position_changes[0]["position"]
+        for position_change in self.position_changes:
+            if (
+                period.id > position_change["period_id"]
+                or timestamp > position_change["timestamp"]
+            ):
+                position = position_change["position"]
 
-            # If the position period covers the provided period
-            if start_period <= period.id <= end_period:
-                # If within the same start period, check if timestamp is after start timestamp
-                if period.id == start_period and timestamp < start_timestamp:
-                    continue
-                # If within the same end period, check if timestamp is before end timestamp
-                if period.id == end_period and timestamp > end_timestamp:
-                    continue
-                # If period is in between start and end periods, the timestamps are valid
-                return position["position"]
+        return position
 
     def __str__(self):
         return self.full_name
@@ -294,17 +286,6 @@ class Period:
 
     def __eq__(self, other):
         return isinstance(other, Period) and other.id == self.id
-
-
-class TimePoint(TypedDict):
-    period_id: int
-    timestamp: timedelta
-
-
-class PositionTimeFrame(TypedDict):
-    start: TimePoint
-    end: TimePoint
-    position: Position
 
 
 class Orientation(Enum):

@@ -15,8 +15,6 @@ from kloppy.domain import (
     Position,
     Provider,
     Team,
-    PositionTimeFrame,
-    TimePoint,
 )
 from kloppy.exceptions import DeserializationError
 from kloppy.infra.serializers.event.deserializer import EventDataDeserializer
@@ -180,43 +178,27 @@ class StatsBombDeserializer(EventDataDeserializer[StatsBombInputs]):
         )
 
         # Create players and teams
-        players_positions = {}
+        team_position_changes = {}
         for lineup in lineups:
             for player in lineup["lineup"]:
-                player_position_time_frames = []
+                position_changes = []
                 for position in player["positions"]:
                     start_timestamp = parse_football_clock_str_ts(
                         position["from"]
                     )
-                    end_period_id = (
-                        position["to_period"]
-                        if position["to_period"]
-                        else periods[-1].id
-                    )
-                    end_timestamp = (
-                        parse_football_clock_str_ts(position["to"])
-                        if position["to"]
-                        else periods[-1].end_timestamp
-                    )
-                    player_position_time_frames.append(
-                        PositionTimeFrame(
-                            start=TimePoint(
-                                period_id=position["from_period"],
-                                timestamp=start_timestamp,
-                            ),
-                            end=TimePoint(
-                                period_id=end_period_id,
-                                timestamp=end_timestamp,
-                            ),
-                            position=Position(
+                    position_changes.append(
+                        {
+                            "timestamp": start_timestamp,
+                            "period_id": position["from_period"],
+                            "position": Position(
                                 position_id=str(position["position_id"]),
                                 name=position["position"],
                             ),
-                        )
+                        }
                     )
-                players_positions[
+                team_position_changes[
                     str(player["player_id"])
-                ] = player_position_time_frames
+                ] = position_changes
 
         starting_formations = {
             raw_event["team"]["id"]: FormationType(
@@ -238,8 +220,10 @@ class StatsBombDeserializer(EventDataDeserializer[StatsBombInputs]):
                     team=team,
                     name=player["player_name"],
                     jersey_no=int(player["jersey_number"]),
-                    starting=str(player["player_id"]) in players_positions,
-                    positions=players_positions.get(str(player["player_id"])),
+                    starting=str(player["player_id"]) in team_position_changes,
+                    position_changes=team_position_changes.get(
+                        str(player["player_id"])
+                    ),
                 )
                 for player in lineup["lineup"]
             ]
