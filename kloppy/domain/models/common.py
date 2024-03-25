@@ -132,8 +132,7 @@ class Player:
         name: Full name of the player
         first_name: First name
         last_name: Last name
-        starting: `True` when player is part of the starting 11
-        position: See [`Position][kloppy.domain.models.common.Position]
+        position_changes: See [`PositionChange][kloppy.domain.models.common.PositionChange]
         attributes: attributes given by the provider
     """
 
