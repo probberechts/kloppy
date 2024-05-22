@@ -1,6 +1,7 @@
 import contextlib
 import logging
 import os
+import gzip
 import urllib.parse
 from dataclasses import dataclass, replace
 from pathlib import PurePath
@@ -113,8 +114,11 @@ def open_as_file(input_: FileLike) -> IO:
             else:
                 if not os.path.exists(input_):
                     raise InputNotFoundError(f"File {input_} does not exist")
-
-                stream = _open(input_, "rb")
+                if input_.endswith(".gz"):
+                    # FIXME: temporary, until #308 is merged
+                    stream = gzip.open(input_, "rb")
+                else:
+                    stream = _open(input_, "rb")
             return stream
     elif isinstance(input_, bytes):
         return BytesIO(input_)

@@ -96,6 +96,7 @@ class Provider(Enum):
         KLOPPY:
         DATAFACTORY:
         STATSPERFORM:
+        HAWKEYE:
     """
 
     METRICA = "metrica"
@@ -109,6 +110,7 @@ class Provider(Enum):
     KLOPPY = "kloppy"
     DATAFACTORY = "datafactory"
     STATSPERFORM = "statsperform"
+    HAWKEYE = "hawkeye"
     OTHER = "other"
 
     def __str__(self):
@@ -789,6 +791,31 @@ class StatsPerformCoordinateSystem(CoordinateSystem):
         )
 
 
+@dataclass
+class HawkEyeCoordinateSystem(CoordinateSystem):
+    @property
+    def provider(self) -> Provider:
+        return Provider.HAWKEYE
+
+    @property
+    def origin(self) -> Origin:
+        return Origin.CENTER
+
+    @property
+    def vertical_orientation(self) -> VerticalOrientation:
+        return VerticalOrientation.BOTTOM_TO_TOP
+
+    @property
+    def pitch_dimensions(self) -> PitchDimensions:
+        return MetricPitchDimensions(
+            x_dim=Dimension(-1 * self.pitch_length / 2, self.pitch_length / 2),
+            y_dim=Dimension(-1 * self.pitch_width / 2, self.pitch_width / 2),
+            pitch_length=self.pitch_length,
+            pitch_width=self.pitch_width,
+            standardized=False
+        )
+
+
 class DatasetType(Enum):
     """
     DatasetType
@@ -839,6 +866,7 @@ def build_coordinate_system(
         Provider.DATAFACTORY: DatafactoryCoordinateSystem,
         Provider.SECONDSPECTRUM: SecondSpectrumCoordinateSystem,
         Provider.STATSPERFORM: StatsPerformCoordinateSystem,
+        Provider.HAWKEYE: HawkEyeCoordinateSystem,
     }
 
     if provider in coordinate_systems:
