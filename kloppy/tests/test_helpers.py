@@ -13,6 +13,7 @@ from kloppy.domain import (
     Ground,
     Metadata,
     MetricaCoordinateSystem,
+    MetricPitchDimensions,
     NormalizedPitchDimensions,
     Orientation,
     Period,
@@ -47,11 +48,14 @@ class TestHelpers:
         ]
         metadata = Metadata(
             flags=(DatasetFlag.BALL_OWNING_TEAM),
-            pitch_dimensions=NormalizedPitchDimensions(
+            pitch_dimensions=NormalizedPitchDimensions.scale_from(
+                MetricPitchDimensions(
+                    x_dim=Dimension(0, 105),
+                    y_dim=Dimension(0, 68),
+                    standardized=False,
+                ),
                 x_dim=Dimension(0, 100),
                 y_dim=Dimension(-50, 50),
-                pitch_length=105,
-                pitch_width=68,
             ),
             orientation=Orientation.HOME_AWAY,
             frame_rate=25,
@@ -107,11 +111,14 @@ class TestHelpers:
         # orientation change AND dimension scale
         transformed_dataset = tracking_data.transform(
             to_orientation="AWAY_HOME",
-            to_pitch_dimensions=NormalizedPitchDimensions(
+            to_pitch_dimensions=NormalizedPitchDimensions.scale_from(
+                MetricPitchDimensions(
+                    x_dim=Dimension(0, 105),
+                    y_dim=Dimension(0, 68),
+                    standardized=False,
+                ),
                 x_dim=Dimension(min=0, max=1),
                 y_dim=Dimension(min=0, max=1),
-                pitch_length=105,
-                pitch_width=68,
             ),
         )
 
@@ -125,11 +132,14 @@ class TestHelpers:
         assert transformed_dataset.metadata.coordinate_system is None
         assert (
             transformed_dataset.metadata.pitch_dimensions
-            == NormalizedPitchDimensions(
+            == NormalizedPitchDimensions.scale_from(
+                MetricPitchDimensions(
+                    x_dim=Dimension(0, 105),
+                    y_dim=Dimension(0, 68),
+                    standardized=False,
+                ),
                 x_dim=Dimension(min=0, max=1),
                 y_dim=Dimension(min=0, max=1),
-                pitch_length=105,
-                pitch_width=68,
             )
         )
 
@@ -137,11 +147,14 @@ class TestHelpers:
         tracking_data = self._get_tracking_dataset()
 
         transformed_dataset = tracking_data.transform(
-            to_pitch_dimensions=NormalizedPitchDimensions(
+            to_pitch_dimensions=NormalizedPitchDimensions.scale_from(
+                MetricPitchDimensions(
+                    x_dim=Dimension(0, 105),
+                    y_dim=Dimension(0, 68),
+                    standardized=False,
+                ),
                 x_dim=Dimension(min=0, max=1),
                 y_dim=Dimension(min=0, max=1),
-                pitch_length=105,
-                pitch_width=68,
             ),
         )
 
@@ -153,20 +166,26 @@ class TestHelpers:
         )
         assert (
             transformed_dataset.metadata.pitch_dimensions
-            == NormalizedPitchDimensions(
+            == NormalizedPitchDimensions.scale_from(
+                MetricPitchDimensions(
+                    x_dim=Dimension(0, 105),
+                    y_dim=Dimension(0, 68),
+                    standardized=False,
+                ),
                 x_dim=Dimension(min=0, max=1),
                 y_dim=Dimension(min=0, max=1),
-                pitch_length=105,
-                pitch_width=68,
             )
         )
 
     def test_transform_to_orientation(self):
-        to_pitch_dimensions = NormalizedPitchDimensions(
+        to_pitch_dimensions = NormalizedPitchDimensions.scale_from(
+            MetricPitchDimensions(
+                x_dim=Dimension(0, 105),
+                y_dim=Dimension(0, 68),
+                standardized=False,
+            ),
             x_dim=Dimension(min=0, max=1),
             y_dim=Dimension(min=0, max=1),
-            pitch_length=105,
-            pitch_width=68,
         )
         # Create a dataset with the KLOPPY pitch dimensions
         # and HOME_AWAY orientation
@@ -304,11 +323,14 @@ class TestHelpers:
         ].coordinates == Point(x=5270.0, y=27.0)
 
         transformed_dataset = dataset.transform(
-            to_pitch_dimensions=NormalizedPitchDimensions(
+            to_pitch_dimensions=NormalizedPitchDimensions.scale_from(
+                MetricPitchDimensions(
+                    x_dim=Dimension(0, 105),
+                    y_dim=Dimension(0, 68),
+                    standardized=False,
+                ),
                 x_dim=Dimension(min=0, max=1),
                 y_dim=Dimension(min=0, max=1),
-                pitch_length=105,
-                pitch_width=68,
             ),
         )
         assert transformed_dataset.records[0].players_data[
@@ -317,20 +339,26 @@ class TestHelpers:
 
         assert (
             transformed_dataset.metadata.pitch_dimensions
-            == NormalizedPitchDimensions(
+            == NormalizedPitchDimensions.scale_from(
+                MetricPitchDimensions(
+                    x_dim=Dimension(0, 105),
+                    y_dim=Dimension(0, 68),
+                    standardized=False,
+                ),
                 x_dim=Dimension(min=0, max=1),
                 y_dim=Dimension(min=0, max=1),
-                pitch_length=105,
-                pitch_width=68,
             )
         )
         assert (
             transformed_dataset.metadata.coordinate_system.pitch_dimensions
-            == NormalizedPitchDimensions(
+            == NormalizedPitchDimensions.scale_from(
+                MetricPitchDimensions(
+                    x_dim=Dimension(0, 105),
+                    y_dim=Dimension(0, 68),
+                    standardized=False,
+                ),
                 x_dim=Dimension(min=0, max=1),
                 y_dim=Dimension(min=0, max=1),
-                pitch_length=105,
-                pitch_width=68,
             )
         )
 

@@ -36,6 +36,7 @@ from kloppy.exceptions import (
     InvalidFilterError,
     KloppyParameterError,
     OrientationError,
+    warn_missing_pitch_dimensions,
 )
 
 from .formation import FormationType
@@ -795,6 +796,14 @@ class KloppyCoordinateSystem(ProviderCoordinateSystem):
     are 105m x 68m.
     """
 
+    def __init__(
+        self,
+        pitch_length: Optional[float] = None,
+        pitch_width: Optional[float] = None,
+    ):
+        self._pitch_length = pitch_length
+        self._pitch_width = pitch_width
+
     @property
     def provider(self) -> Provider:
         return Provider.KLOPPY
@@ -809,22 +818,25 @@ class KloppyCoordinateSystem(ProviderCoordinateSystem):
 
     @property
     def pitch_dimensions(self) -> PitchDimensions:
-        if self._pitch_length is not None and self._pitch_width is not None:
-            return NormalizedPitchDimensions(
-                x_dim=Dimension(0, 1),
-                y_dim=Dimension(0, 1),
-                pitch_length=self._pitch_length,
-                pitch_width=self._pitch_width,
-                standardized=False,
+        if self._pitch_length is None or self._pitch_width is None:
+            pitch_length = DEFAULT_PITCH_LENGTH
+            pitch_width = DEFAULT_PITCH_WIDTH
+            warn_missing_pitch_dimensions(
+                context="creating a KloppyCoordinateSystem",
+                stacklevel=4,
             )
         else:
-            return NormalizedPitchDimensions(
-                x_dim=Dimension(0, 1),
-                y_dim=Dimension(0, 1),
-                pitch_length=105,
-                pitch_width=68,
-                standardized=True,
-            )
+            pitch_length = self._pitch_length
+            pitch_width = self._pitch_width
+        return NormalizedPitchDimensions.scale_from(
+            MetricPitchDimensions(
+                x_dim=Dimension(0, pitch_length),
+                y_dim=Dimension(0, pitch_width),
+                standardized=False,
+            ),
+            x_dim=Dimension(0, 1),
+            y_dim=Dimension(0, 1),
+        )
 
 
 class MetricaCoordinateSystem(KloppyCoordinateSystem):
@@ -1243,22 +1255,24 @@ class DatafactoryCoordinateSystem(ProviderCoordinateSystem):
 
     @property
     def pitch_dimensions(self) -> PitchDimensions:
-        if self._pitch_length is not None and self._pitch_width is not None:
-            return NormalizedPitchDimensions(
-                x_dim=Dimension(-1, 1),
-                y_dim=Dimension(-1, 1),
-                pitch_length=self._pitch_length,
-                pitch_width=self._pitch_width,
-                standardized=False,
+        if self._pitch_length is None or self._pitch_width is None:
+            pitch_length = DEFAULT_PITCH_LENGTH
+            pitch_width = DEFAULT_PITCH_WIDTH
+            warn_missing_pitch_dimensions(
+                context="creating a DatafactoryCoordinateSystem",
             )
         else:
-            return NormalizedPitchDimensions(
-                x_dim=Dimension(-1, 1),
-                y_dim=Dimension(-1, 1),
-                pitch_length=105,
-                pitch_width=68,
-                standardized=True,
-            )
+            pitch_length = self._pitch_length
+            pitch_width = self._pitch_width
+        return NormalizedPitchDimensions.scale_from(
+            MetricPitchDimensions(
+                x_dim=Dimension(0, pitch_length),
+                y_dim=Dimension(0, pitch_width),
+                standardized=False,
+            ),
+            x_dim=Dimension(-1, 1),
+            y_dim=Dimension(-1, 1),
+        )
 
 
 class SportVUCoordinateSystem(ProviderCoordinateSystem):

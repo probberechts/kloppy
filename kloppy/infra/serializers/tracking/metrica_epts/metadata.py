@@ -9,6 +9,7 @@ from kloppy.domain import (
     DatasetFlag,
     Dimension,
     Ground,
+    MetricPitchDimensions,
     NormalizedPitchDimensions,
     Orientation,
     Period,
@@ -185,11 +186,14 @@ def _load_pitch_dimensions(
     field_size_elm = field_size_path.find(metadata_elm).find("FieldSize")
 
     if field_size_elm is not None and normalized:
-        return NormalizedPitchDimensions(
+        return NormalizedPitchDimensions.scale_from(
+            MetricPitchDimensions(
+                x_dim=Dimension(0, float(field_size_elm.find("Width"))),
+                y_dim=Dimension(0, float(field_size_elm.find("Height"))),
+                standardized=False,
+            ),
             x_dim=Dimension(0, 1),
             y_dim=Dimension(0, 1),
-            pitch_length=int(field_size_elm.find("Width")),
-            pitch_width=int(field_size_elm.find("Height")),
         )
     else:
         return None

@@ -2,9 +2,12 @@ from dataclasses import dataclass
 from enum import Enum
 from math import sqrt
 from typing import Optional
-import warnings
 
-from kloppy.exceptions import MissingDimensionError
+from kloppy.exceptions import (
+    MissingDimensionError,
+    MissingPitchSizeError,
+    warn_missing_pitch_dimensions,
+)
 
 DEFAULT_PITCH_LENGTH = 105.0
 DEFAULT_PITCH_WIDTH = 68.0
@@ -165,6 +168,51 @@ class PitchDimensions:
 
     pitch_length: Optional[float] = None
     pitch_width: Optional[float] = None
+
+    def __post_init__(self):
+        if self.standardized:
+            # The pitch dimensions must be fully specified
+            if (
+                self.x_dim.min is None
+                or self.x_dim.max is None
+                or self.y_dim.min is None
+                or self.y_dim.max is None
+            ):
+                raise MissingDimensionError(
+                    "The coordinate boundaries need to be fully specified "
+                    "when creating standardized pitch dimensions."
+                )
+        else:
+            # The dimensions should either be unspecified, or match the pitch size
+            if (
+                self.x_dim.min is not None
+                and self.x_dim.max is not None
+                and self.y_dim.min is not None
+                and self.y_dim.max is not None
+            ):
+                # infer pitch size if not provided
+                if self.pitch_length is None:
+                    self.pitch_length = self.unit.convert(
+                        Unit.METERS, self.x_dim.max - self.x_dim.min
+                    )
+                # or check if consistent
+                elif self.pitch_length != self.unit.convert(
+                    Unit.METERS, self.x_dim.max - self.x_dim.min
+                ):
+                    raise ValueError(
+                        "The x_dim does not match the pitch_length."
+                    )
+
+                if self.pitch_width is None:
+                    self.pitch_width = self.unit.convert(
+                        Unit.METERS, self.y_dim.max - self.y_dim.min
+                    )
+                elif self.pitch_width != self.unit.convert(
+                    Unit.METERS, self.y_dim.max - self.y_dim.min
+                ):
+                    raise ValueError(
+                        "The y_dim does not match the pitch_width."
+                    )
 
     def convert(self, to_unit: Unit) -> "PitchDimensions":
         """Convert the pitch dimensions to another unit.
@@ -533,11 +581,8 @@ class PitchDimensions:
             The distance between the two points in the given unit
         """
         if self.pitch_length is None or self.pitch_width is None:
-            warnings.warn(
-                "The pitch length and width are not specified. "
-                "Assuming a standard pitch size of 105x68 meters. "
-                "This may lead to incorrect results.",
-                stacklevel=2,
+            warn_missing_pitch_dimensions(
+                context="calculating the distance between two points."
             )
             pitch_length = DEFAULT_PITCH_LENGTH
             pitch_width = DEFAULT_PITCH_WIDTH
@@ -605,9 +650,9 @@ class ImperialPitchDimensions(PitchDimensions):
 
 
 @dataclass
-class NormalizedPitchDimensions(MetricPitchDimensions):
+class NormalizedPitchDimensions(PitchDimensions):
     """
-    The standard pitch dimensions in normalized units.
+    Pitch dimensions in normalized units.
 
     The pitch dimensions are normalized to a unit square, where the length
     and width of the pitch are 1. All other dimensions are scaled accordingly.
@@ -618,36 +663,120 @@ class NormalizedPitchDimensions(MetricPitchDimensions):
     standardized: bool = False
     unit: Unit = Unit.NORMED
 
+    # Provide sentinel defaults for all inherited mandatory fields.
+    # This fixes: "non-default argument follows default argument"
+    goal_width: float = None  # type: ignore
+    goal_height: Optional[float] = None
+    six_yard_width: float = None  # type: ignore
+    six_yard_length: float = None  # type: ignore
+    penalty_area_width: float = None  # type: ignore
+    penalty_area_length: float = None  # type: ignore
+    circle_radius: float = None  # type: ignore
+    corner_radius: float = None  # type: ignore
+    penalty_spot_distance: float = None  # type: ignore
+    penalty_arc_radius: float = None  # type: ignore
+
+    pitch_length: Optional[float] = None
+    pitch_width: Optional[float] = None
+
     def __post_init__(self):
-        if self.pitch_length is None or self.pitch_width is None:
-            raise ValueError("The pitch length and width need to be specified")
+        """Validates that the object was initialized with actual data."""
+        if self.goal_width is None:
+            raise RuntimeError(
+                f"{self.__class__.__name__} cannot be instantiated directly with empty values. "
+                "Use the 'scale_from()' factory method."
+            )
+
+    @classmethod
+    def scale_from(
+        cls,
+        dims: PitchDimensions,
+        x_dim: Dimension = Dimension(0, 1),
+        y_dim: Dimension = Dimension(0, 1),
+    ) -> "NormalizedPitchDimensions":
+        """
+        Creates a normalized pitch instance by scaling from other dimensions.
+
+        This factory method takes a set of pitch dimensions and
+        scales them to fit within a normalized coordinate system defined by
+        `x_dim` and `y_dim`. Field markings are adjusted proportionally based on
+        the actual pitch size for non-standardized pitches.
+
+        Args:
+            dims: The source dimensions (e.g., MetricPitchDimensions).
+            x_dim: The target boundaries for the x-axis (length).
+                Defaults to Dimension(0, 1).
+            y_dim: The target boundaries for the y-axis (width).
+                Defaults to Dimension(0, 1).
+
+        Returns:
+            An instance of NormalizedPitchDimensions with field markings scaled
+            proportionally.
+
+        Raises:
+            ValueError: If the target `x_dim` or `y_dim` boundaries are not fully
+                specified (i.e., min or max is None).
+
+        Example:
+            >>> # scale a IFAB metric pitch to [0, 1] x [0, 1] normalized dimensions
+            >>> dims = NormalizedPitchDimensions.scale_from(
+            ...     MetricPitchDimensions(pitch_length=105, pitch_width=68),
+            ...     x_dim=Dimension(0, 1),
+            ...     y_dim=Dimension(0, 1)
+            ... )
+        """
         if (
-            self.x_dim.min is None
-            or self.x_dim.max is None
-            or self.y_dim.min is None
-            or self.y_dim.max is None
+            x_dim.min is None
+            or x_dim.max is None
+            or y_dim.min is None
+            or y_dim.max is None
         ):
-            raise ValueError("The pitch dimensions need to be fully specified.")
-        dim_width = self.y_dim.max - self.y_dim.min
-        dim_length = self.x_dim.max - self.x_dim.min
-        self.goal_width = self.goal_width / self.pitch_width * dim_width
-        self.six_yard_width = self.six_yard_width / self.pitch_width * dim_width
-        self.six_yard_length = (
-            self.six_yard_length / self.pitch_length * dim_length
-        )
-        self.penalty_area_width = (
-            self.penalty_area_width / self.pitch_width * dim_width
-        )
-        self.penalty_area_length = (
-            self.penalty_area_length / self.pitch_length * dim_length
-        )
-        self.circle_radius = self.circle_radius / self.pitch_length * dim_length
-        self.corner_radius = self.corner_radius / self.pitch_length * dim_length
-        self.penalty_spot_distance = (
-            self.penalty_spot_distance / self.pitch_length * dim_length
-        )
-        self.penalty_arc_radius = (
-            self.penalty_arc_radius / self.pitch_length * dim_length
+            raise MissingDimensionError(
+                "The pitch dimensions need to be fully specified."
+            )
+
+        dim_width = y_dim.max - y_dim.min
+        dim_length = x_dim.max - x_dim.min
+
+        if dims.standardized:
+            pitch_length = dims.x_dim.max - dims.x_dim.min
+            pitch_width = dims.y_dim.max - dims.y_dim.min
+        else:
+            if dims.pitch_length is None or dims.pitch_width is None:
+                raise MissingPitchSizeError(
+                    "Normalizing non-standardized pitch dimensions "
+                    "requires the pitch length and width to be specified."
+                )
+                pitch_length = DEFAULT_PITCH_LENGTH
+                pitch_width = DEFAULT_PITCH_WIDTH
+            else:
+                pitch_length = dims.pitch_length
+                pitch_width = dims.pitch_width
+
+        return cls(
+            x_dim=x_dim,
+            y_dim=y_dim,
+            standardized=dims.standardized,
+            unit=Unit.NORMED,
+            goal_width=dims.goal_width / pitch_width * dim_width,
+            six_yard_width=dims.six_yard_width / pitch_width * dim_width,
+            six_yard_length=dims.six_yard_length / pitch_length * dim_length,
+            penalty_area_width=(
+                dims.penalty_area_width / pitch_width * dim_width
+            ),
+            penalty_area_length=(
+                dims.penalty_area_length / pitch_length * dim_length
+            ),
+            circle_radius=dims.circle_radius / pitch_length * dim_length,
+            corner_radius=dims.corner_radius / pitch_length * dim_length,
+            penalty_spot_distance=(
+                dims.penalty_spot_distance / pitch_length * dim_length
+            ),
+            penalty_arc_radius=(
+                dims.penalty_arc_radius / pitch_length * dim_length
+            ),
+            pitch_length=pitch_length if dims.pitch_length else None,
+            pitch_width=pitch_width if dims.pitch_width else None,
         )
 
 

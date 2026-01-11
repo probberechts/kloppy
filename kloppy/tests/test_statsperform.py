@@ -17,6 +17,7 @@ from kloppy.domain import (
     Time,
     TrackingDataset,
 )
+from kloppy.exceptions import MissingPitchSizeWarning
 
 
 @pytest.fixture(scope="module")
@@ -409,10 +410,7 @@ class TestStatsPerformTracking:
         assert pitch_dimensions.y_dim.max == 1.0
 
         # Pitch dimensions are required to transform coordinates
-        with pytest.warns(
-            UserWarning,
-            match="The pitch dimensions are required to transform coordinates *",
-        ):
+        with pytest.warns(MissingPitchSizeWarning):
             statsperform.load_tracking(
                 ma1_data=tracking_metadata_xml,
                 ma25_data=tracking_data,
