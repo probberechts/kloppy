@@ -4,21 +4,22 @@ A scoring function takes an event and a tracking frame and returns a
 non-negative number. A score of 0 means that the event and the tracking frame
 are perfectly aligned. The higher the score, the worse the alignment is.
 """
+
 import math
-from typing import Callable, List, Optional
+from typing import Callable, Optional
 
 import numpy as np
 
 from kloppy.domain import BallState, Event, Frame
 
 from . import config
-from .utils import eucl
 from .features import (
+    acceleration_player_ball,
     ball_acceleration,
     ball_state,
     dist_player_ball,
-    acceleration_player_ball,
 )
+from .utils import eucl
 
 
 def mis_clock(event: Event, frame: Frame) -> float:
@@ -35,8 +36,8 @@ def mis_clock(event: Event, frame: Frame) -> float:
         Absolute difference between the event timestamp and the frame
         timestamp.
     """
-    ts_frame = frame.timestamp
-    ts_event = event.timestamp
+    ts_frame = frame.timestamp.total_seconds()
+    ts_event = event.timestamp.total_seconds()
     return abs(ts_frame - ts_event)
 
 
@@ -454,9 +455,9 @@ class combine:
     def __call__(
         self,
         event: Event,
-        frames: List[Frame],
-        mask: Optional[List[bool]] = None,
-    ) -> List[float]:
+        frames: list[Frame],
+        mask: Optional[list[bool]] = None,
+    ) -> list[float]:
         if mask is None:
             mask = [True] * len(frames)
         return [

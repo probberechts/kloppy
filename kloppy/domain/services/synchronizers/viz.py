@@ -1,18 +1,21 @@
 """Code to visualise the alignment between event and tracking data."""
-import math
+
 from collections import defaultdict
+import math
 
 from kloppy.domain import (
+    CustomCoordinateSystem,
     DatasetTransformer,
+    Dimension,
+    MetricPitchDimensions,
+    Origin,
     TrackingDataset,
-    UEFACoordinateSystem,
+    VerticalOrientation,
 )
 
-from . import utils
-
 try:
-    import matplotlib.pyplot as plt
     from matplotlib import animation
+    import matplotlib.pyplot as plt
     from mplsoccer import Pitch
 except ImportError:
     raise ImportError(
@@ -152,11 +155,9 @@ def animate_alignment(
         frame, active_event = data
 
         # display the clock
-        ts = frame.timestamp
+        ts = frame.timestamp.total_seconds()
         frame_clock.set_text(
-            "Frame clock - {min:02d}:{sec:02d}.{ms:03d}".format(
-                min=int(ts // 60), sec=int(ts % 60), ms=int(ts * 1000 % 1000)
-            )
+            f"Frame clock - {int(ts // 60):02d}:{int(ts % 60):02d}.{int(ts * 1000 % 1000):03d}"
         )
 
         # set the ball data with the x and y positions for the ith frame
@@ -189,19 +190,14 @@ def animate_alignment(
                 event.set_data(
                     [active_event.coordinates.x], [active_event.coordinates.y]
                 )
-            ts = active_event.timestamp
+            ts = active_event.timestamp.total_seconds()
             etype = (
                 active_event.event_name.title()
                 if active_event.event_name
                 else "Generic"
             )
             event_clock.set_text(
-                "{etype} - {min:02d}:{sec:02d}.{ms:03d}".format(
-                    etype=etype,
-                    min=int(ts // 60),
-                    sec=int(ts % 60),
-                    ms=int(ts * 1000 % 1000),
-                )
+                f"{etype} - {int(ts // 60):02d}:{int(ts % 60):02d}.{int(ts * 1000 % 1000):03d}"
             )
         else:
             event.set_data([], [])
@@ -269,14 +265,9 @@ def plot_alignment(
             )
 
         # display the event clock
-        ts = event.timestamp
+        ts = event.timestamp.total_seconds()
         etype = event.event_name.title() if event.event_name else "Generic"
-        event_clock_str = "{etype} - {min:02d}:{sec:02d}.{ms:03d}".format(
-            etype=etype,
-            min=int(ts // 60),
-            sec=int(ts % 60),
-            ms=int(ts * 1000 % 1000),
-        )
+        event_clock_str = f"{etype} - {int(ts // 60):02d}:{int(ts % 60):02d}.{int(ts * 1000 % 1000):03d}"
         ax.text(
             0.98,
             0.03,
@@ -301,10 +292,8 @@ def plot_alignment(
             )
             continue
 
-        ts = frame.timestamp
-        frame_clock_str = "Frame clock - {min:02d}:{sec:02d}.{ms:03d}".format(
-            min=int(ts // 60), sec=int(ts % 60), ms=int(ts * 1000 % 1000)
-        )
+        ts = frame.timestamp.total_seconds()
+        frame_clock_str = f"Frame clock - {int(ts // 60):02d}:{int(ts % 60):02d}.{int(ts * 1000 % 1000):03d}"
         ax.text(
             0.02,
             0.03,
@@ -375,13 +364,22 @@ def animate_score(
     # to compute the score, but it is not very clean
     transformer = DatasetTransformer(
         from_coordinate_system=coordinate_system,
-        to_coordinate_system=UEFACoordinateSystem(normalized=False),
+        to_coordinate_system=CustomCoordinateSystem(
+            origin=Origin.BOTTOM_LEFT,
+            vertical_orientation=VerticalOrientation.BOTTOM_TO_TOP,
+            pitch_dimensions=MetricPitchDimensions(
+                x_dim=Dimension(min=0, max=105),
+                y_dim=Dimension(min=0, max=68),
+                standardized=True,
+            ),
+        ),
     )
     norm_event = transformer.transform_event(event)
     norm_event.prev_record = event.prev_record
     norm_event.next_record = event.next_record
     norm_frames = TrackingDataset(
-        records=[transformer.transform_frame(f) for f in frames], metadata=None
+        records=[transformer.transform_frame(f) for f in frames],
+        metadata=frames[0].dataset.metadata,
     )
 
     # set up the figure
@@ -452,16 +450,11 @@ def animate_score(
             [norm_event.coordinates.y],
             **cosmetics["event"],
         )
-    ts = norm_event.timestamp
+    ts = norm_event.timestamp.total_seconds()
     etype = (
         norm_event.event_name.title() if norm_event.event_name else "Generic"
     )
-    event_clock_str = "{etype} - {min:02d}:{sec:02d}.{ms:03d}".format(
-        etype=etype,
-        min=int(ts // 60),
-        sec=int(ts % 60),
-        ms=int(ts * 1000 % 1000),
-    )
+    event_clock_str = f"{etype} - {int(ts // 60):02d}:{int(ts % 60):02d}.{int(ts * 1000 % 1000):03d}"
     axs["pitch"].text(
         105 * 0.98,
         68 * 0.97,
@@ -473,18 +466,17 @@ def animate_score(
     )
 
     def gen_data():
-        for frame in norm_frames:
+        for _frame in norm_frames:
+            frame = _frame
             yield frame
 
     def animate(data):
         frame = data
 
         # display the clock
-        ts = frame.timestamp
+        ts = frame.timestamp.total_seconds()
         frame_clock.set_text(
-            "Frame clock - {min:02d}:{sec:02d}.{ms:03d}".format(
-                min=int(ts // 60), sec=int(ts % 60), ms=int(ts * 1000 % 1000)
-            )
+            f"Frame clock - {int(ts // 60):02d}:{int(ts % 60):02d}.{int(ts * 1000 % 1000):03d}"
         )
 
         # set the ball data with the x and y positions for the ith frame

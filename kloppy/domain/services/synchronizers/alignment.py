@@ -1,6 +1,7 @@
 """Functions for sequence alignment."""
+
 from enum import Enum
-from typing import Callable, List, Optional
+from typing import Callable, Optional
 
 import numpy as np
 
@@ -29,23 +30,29 @@ def _get_frames_to_check(
     return slice(
         max(
             idx_start,
-            int(fps * event.timestamp - window / 2 * fps - offset * fps),
+            int(
+                fps * event.timestamp.total_seconds()
+                - window / 2 * fps
+                - offset * fps
+            ),
         ),
         min(
-            int(fps * event.timestamp + window / 2 * fps - offset * fps),
+            int(
+                fps * event.timestamp.total_seconds()
+                + window / 2 * fps
+                - offset * fps
+            ),
             idx_end,
         ),
     )
 
 
 def timestamp_alignment(
-    s1: List[Event],
-    s2: List[Frame],
+    s1: list[Event],
+    s2: list[Frame],
     fps: float,
-    score_fn: Callable[
-        [Event, List[Frame], Optional[List[bool]]], List[float]
-    ],
-    mask_fn: Callable[[Event, List[Frame]], List[bool]],
+    score_fn: Callable[[Event, list[Frame], Optional[list[bool]]], list[float]],
+    mask_fn: Callable[[Event, list[Frame]], list[bool]],
     window_fn: Callable[[Event], float],
     offset: float = 0,
 ):
@@ -53,7 +60,7 @@ def timestamp_alignment(
     alignment = [
         (
             event_idx,
-            round((event.timestamp - offset) * fps),
+            round((event.timestamp.total_seconds() - offset) * fps),
         )
         for event_idx, event in enumerate(s1)
     ]
@@ -61,13 +68,11 @@ def timestamp_alignment(
 
 
 def local_alignment(
-    s1: List[Event],
-    s2: List[Frame],
+    s1: list[Event],
+    s2: list[Frame],
     fps: float,
-    score_fn: Callable[
-        [Event, List[Frame], Optional[List[bool]]], List[float]
-    ],
-    mask_fn: Callable[[Event, List[Frame]], List[bool]],
+    score_fn: Callable[[Event, list[Frame], Optional[list[bool]]], list[float]],
+    mask_fn: Callable[[Event, list[Frame]], list[bool]],
     window_fn: Callable[[Event], float],
     offset: float = 0,
 ):
@@ -96,13 +101,11 @@ def local_alignment(
 
 
 def greedy_alignment(
-    s1: List[Event],
-    s2: List[Frame],
+    s1: list[Event],
+    s2: list[Frame],
     fps: float,
-    score_fn: Callable[
-        [Event, List[Frame], Optional[List[bool]]], List[float]
-    ],
-    mask_fn: Callable[[Event, List[Frame]], List[bool]],
+    score_fn: Callable[[Event, list[Frame], Optional[list[bool]]], list[float]],
+    mask_fn: Callable[[Event, list[Frame]], list[bool]],
     window_fn: Callable[[Event], float],
     offset: float = np.inf,
 ):
@@ -132,13 +135,11 @@ def greedy_alignment(
 
 
 def optimal_alignment(
-    s1: List[Event],
-    s2: List[Frame],
+    s1: list[Event],
+    s2: list[Frame],
     fps: float,
-    score_fn: Callable[
-        [Event, List[Frame], Optional[List[bool]]], List[float]
-    ],
-    mask_fn: Callable[[Event, List[Frame]], List[bool]],
+    score_fn: Callable[[Event, list[Frame], Optional[list[bool]]], list[float]],
+    mask_fn: Callable[[Event, list[Frame]], list[bool]],
     window_fn: Callable[[Event], float],
     offset: float = 0,
     max_score: float = 10,

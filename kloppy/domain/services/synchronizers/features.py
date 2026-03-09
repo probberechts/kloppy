@@ -1,6 +1,7 @@
 """Feature functions for tracking / event data."""
-import math
+
 from functools import partial
+import math
 from typing import Callable, Optional
 
 from kloppy.domain import BallState, Frame, Player, PlayerData, Point3D
@@ -140,8 +141,8 @@ def ball_speed(
         return float("nan")
     ball_coords = frame.ball_coordinates
     next_ball_coords = next_frame.ball_coordinates
-    timestamp = frame.timestamp
-    next_timestamp = next_frame.timestamp
+    timestamp = frame.timestamp.total_seconds()
+    next_timestamp = next_frame.timestamp.total_seconds()
     if ball_coords is None or next_ball_coords is None:
         return float("nan")
 
@@ -185,8 +186,8 @@ def ball_acceleration(
 
     speed = ball_speed(frame, max_speed=max_speed, window=window)
     prev_speed = ball_speed(prev_frame, max_speed=max_speed, window=window)
-    timestamp = frame.timestamp
-    prev_timestamp = prev_frame.timestamp
+    timestamp = frame.timestamp.total_seconds()
+    prev_timestamp = prev_frame.timestamp.total_seconds()
     dspeed = speed - prev_speed
     dt = timestamp - prev_timestamp
     acceleration = dspeed / dt if dt > 0 else float("nan")
@@ -243,8 +244,8 @@ def player_speed(
         return float("nan")
     player_coords = player_data.coordinates
     next_player_coords = next_player_data.coordinates
-    timestamp = frame.timestamp
-    next_timestamp = next_frame.timestamp
+    timestamp = frame.timestamp.total_seconds()
+    next_timestamp = next_frame.timestamp.total_seconds()
     if player_coords is None or next_player_coords is None:
         return float("nan")
 
@@ -293,8 +294,8 @@ def player_acceleration(
     prev_speed = player_speed(
         prev_frame, player, max_speed=max_speed, window=window
     )
-    timestamp = frame.timestamp
-    prev_timestamp = prev_frame.timestamp
+    timestamp = frame.timestamp.total_seconds()
+    prev_timestamp = prev_frame.timestamp.total_seconds()
     dspeed = speed - prev_speed
     dt = timestamp - prev_timestamp
     acceleration = dspeed / dt if dt > 0 else float("nan")
@@ -374,8 +375,8 @@ def speed_player_ball(
         return float("nan")
     dist = dist_player_ball(frame, player)
     next_dist = dist_player_ball(next_frame, player)
-    timestamp = frame.timestamp
-    next_timestamp = next_frame.timestamp
+    timestamp = frame.timestamp.total_seconds()
+    next_timestamp = next_frame.timestamp.total_seconds()
     ddist = next_dist - dist
     dt = next_timestamp - timestamp
     speed = ddist / dt if dt > 0 else float("nan")
@@ -413,14 +414,12 @@ def acceleration_player_ball(
     prev_frame = frame.prev_record
     if prev_frame is None:
         return float("nan")
-    speed = speed_player_ball(
-        frame, player, max_speed=max_speed, window=window
-    )
+    speed = speed_player_ball(frame, player, max_speed=max_speed, window=window)
     prev_speed = speed_player_ball(
         prev_frame, player, max_speed=max_speed, window=window
     )
-    timestamp = frame.timestamp
-    prev_timestamp = prev_frame.timestamp
+    timestamp = frame.timestamp.total_seconds()
+    prev_timestamp = prev_frame.timestamp.total_seconds()
     dspeed = speed - prev_speed
     dt = timestamp - prev_timestamp
     acceleration = dspeed / dt if dt > 0 else float("nan")
@@ -457,7 +456,9 @@ def dist_receiver_ball(
     next_frame = frame
     while (
         next_frame.next_record is not None
-        and next_frame.next_record.timestamp - frame.timestamp < duration
+        and next_frame.next_record.timestamp.total_sconds()
+        - frame.timestamp.total_sconds()
+        < duration
     ):
         next_frame = next_frame.next_record
         dist = dist_player_ball(next_frame, receiver)

@@ -5,8 +5,9 @@ indicating whether the frame should be considered for matching with the event
 or not. If a function does not have enough information to make a decision, it
 should return True.
 """
+
 import math
-from typing import List, Optional, Callable
+from typing import Callable, Optional
 
 import numpy as np
 
@@ -132,7 +133,8 @@ def mask_ball_possession_receiver(
     receiver_frame = frame
     while (
         receiver_frame.next_record is not None
-        and receiver_frame.next_record.timestamp - frame.timestamp
+        and receiver_frame.next_record.timestamp.total_seconds()
+        - frame.timestamp.total_seconds()
         < cutoff_time
     ):
         receiver_frame = receiver_frame.next_record
@@ -368,7 +370,7 @@ def apply_if(
     return inner
 
 
-def combine(*mask_funcs) -> Callable[[Event, List[Frame]], List[bool]]:
+def combine(*mask_funcs) -> Callable[[Event, list[Frame]], list[bool]]:
     """Combine an arbitrary number of masking functions to a single one.
 
     Takes the conjunction of all masking functions.
@@ -384,7 +386,7 @@ def combine(*mask_funcs) -> Callable[[Event, List[Frame]], List[bool]]:
         Combined masking function.
     """
 
-    def inner(event: Event, frames: List[Frame]) -> List[bool]:
+    def inner(event: Event, frames: list[Frame]) -> list[bool]:
         return [all(f(event, frame) for f in mask_funcs) for frame in frames]
 
     return inner
@@ -392,7 +394,7 @@ def combine(*mask_funcs) -> Callable[[Event, List[Frame]], List[bool]]:
 
 def combine_and_reduce(
     score_func, *mask_funcs
-) -> Callable[[Event, List[Frame]], List[bool]]:
+) -> Callable[[Event, list[Frame]], list[bool]]:
     """Combine an arbitrary number of masking functions to a single one.
 
     Takes the conjunction of all masking functions. If a window of consecutive
@@ -422,7 +424,7 @@ def combine_and_reduce(
         ranges = np.where(absdiff == 1)[0].reshape(-1, 2)
         return ranges
 
-    def inner(event: Event, frames: List[Frame]) -> List[bool]:
+    def inner(event: Event, frames: list[Frame]) -> list[bool]:
         masked_frames = [
             all(f(event, frame) for f in mask_funcs) for frame in frames
         ]

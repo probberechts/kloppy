@@ -1,14 +1,14 @@
-import logging
-import warnings
 from functools import partial
-from typing import Callable, List, Literal, Optional, Tuple
+import logging
+from typing import Callable, Literal, Optional
+import warnings
 
 import numpy as np
 
 from kloppy.domain import (
     Event,
-    EventType,
     EventDataset,
+    EventType,
     Frame,
     Point,
     SetPieceQualifier,
@@ -45,7 +45,7 @@ class EventTrackingSynchronizer:
     def __init__(
         self,
         strategy: SynchronizationStrategy,
-        is_handled: Callable | List[EventType] = config.is_handled,
+        is_handled: Callable | list[EventType] = config.is_handled,
     ):
         self.strategy = strategy
 
@@ -57,12 +57,12 @@ class EventTrackingSynchronizer:
 
     def _find_kickoff(
         self,
-        events: List[Event],
-        frames: List[Frame],
+        events: list[Event],
+        frames: list[Frame],
         fps: float,
         score_fn: Optional[Callable] = None,
         mask_fn: Optional[Callable] = None,
-    ) -> Tuple[Frame, float]:
+    ) -> tuple[Frame, float]:
         """Searches for the kickoff frame.
 
         Parameters
@@ -118,14 +118,12 @@ class EventTrackingSynchronizer:
             )
             # Some deserializers do not set the coordinates of the kickoff event
             kickoff_event.coordinates = Point(52.5, 34)
-            logger.debug(
-                f"Found kickoff event at ts={kickoff_event.timestamp}"
-            )
+            logger.debug(f"Found kickoff event at ts={kickoff_event.timestamp}")
         except StopIteration:
             raise SynchronizationError("Could not find a kickoff event.")
 
         # Find the frame idx that matches the kickoff event based on the timestamp
-        frame_idx = int(fps * kickoff_event.timestamp)
+        frame_idx = int(fps * kickoff_event.timestamp.total_seconds())
 
         # Check the frames with a timestamp before the kickoff event
         # and within 60 seconds after the kickoff event
@@ -136,6 +134,9 @@ class EventTrackingSynchronizer:
         )
         mask = mask_fn(kickoff_event, frames[frames_to_check])
         scores = score_fn(kickoff_event, frames[frames_to_check], mask)
+
+        if len(scores) == 0:
+            return None, 0
 
         best_idx = np.nanargmin(scores)
         if scores[best_idx] == np.inf:
@@ -151,7 +152,7 @@ class EventTrackingSynchronizer:
         self,
         events: EventDataset,
         frames: TrackingDataset,
-        offset: Optional[Literal["auto"] | List[float]] = "auto",
+        offset: Optional[Literal["auto"] | list[float]] = "auto",
         show_progress: bool = False,
     ) -> EventDataset:
         """Synchronizes the event dataset with the tracking dataset.
@@ -234,7 +235,8 @@ class EventTrackingSynchronizer:
             else:
                 raise ValueError("Invalid offset parameter.")
 
-            period_offset += period.start_timestamp
+            # period_offset += period.start_timestamp  #FIXME: disabled for now
+            period_offset = 0
 
             # Align the events and frames
             alignment = self.strategy(

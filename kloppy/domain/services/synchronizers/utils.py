@@ -1,17 +1,22 @@
+from dataclasses import replace
+from datetime import timedelta
 import math
 import random
-from dataclasses import replace
 
 from kloppy.domain import (
-    Orientation,
-    Point,
+    CustomCoordinateSystem,
+    Dimension,
     EventDataset,
-    TrackingDataset,
-    SkillCornerCoordinateSystem,
-    SportecTrackingDataCoordinateSystem,
-    SportecEventDataCoordinateSystem,
+    MetricPitchDimensions,
+    Orientation,
+    Origin,
+    Point,
     SecondSpectrumCoordinateSystem,
-    UEFACoordinateSystem,
+    SkillCornerCoordinateSystem,
+    SportecEventDataCoordinateSystem,
+    SportecTrackingDataCoordinateSystem,
+    TrackingDataset,
+    VerticalOrientation,
 )
 
 
@@ -29,7 +34,6 @@ def normalize_datasets(events: EventDataset, frames: TrackingDataset):
         SportecTrackingDataCoordinateSystem,
         SportecEventDataCoordinateSystem,
         SecondSpectrumCoordinateSystem,
-        UEFACoordinateSystem,
     )
     if (
         events.metadata.coordinate_system != frames.metadata.coordinate_system
@@ -47,7 +51,15 @@ def normalize_datasets(events: EventDataset, frames: TrackingDataset):
         if not isinstance(
             frames.metadata.coordinate_system, metric_coordinate_systems
         ):
-            to_coordinate_system = UEFACoordinateSystem(normalized=False)
+            to_coordinate_system = CustomCoordinateSystem(
+                origin=Origin.BOTTOM_LEFT,
+                vertical_orientation=VerticalOrientation.BOTTOM_TO_TOP,
+                pitch_dimensions=MetricPitchDimensions(
+                    x_dim=Dimension(min=0, max=105),
+                    y_dim=Dimension(min=0, max=68),
+                    standardized=True,
+                ),
+            )
         else:
             to_coordinate_system = frames.metadata.coordinate_system
         if frames.metadata.orientation in (
@@ -91,7 +103,7 @@ def unsync(event_dataset, offset=2, sigma_ts=1, sigma_loc=0.01, seed=1234):
     unsync_events = []
     for i, event in enumerate(event_dataset):
         attempts = 1
-        noise_ts = random.gauss(mu=0, sigma=sigma_ts)
+        noise_ts = timedelta(seconds=random.gauss(mu=0, sigma=sigma_ts))
         noise_x = random.gauss(mu=0, sigma=sigma_loc)
         noise_y = random.gauss(mu=0, sigma=sigma_loc)
         # make sure the order of the events does not change
@@ -99,25 +111,23 @@ def unsync(event_dataset, offset=2, sigma_ts=1, sigma_loc=0.01, seed=1234):
             (
                 (
                     event.prev_record
-                    and event.timestamp + noise_ts
-                    < event.prev_record.timestamp
+                    and event.timestamp + noise_ts < event.prev_record.timestamp
                 )
                 or (
                     event.next_record
-                    and event.timestamp + noise_ts
-                    > event.next_record.timestamp
+                    and event.timestamp + noise_ts > event.next_record.timestamp
                 )
             )
             and attempts
             < 20  # we need this because some events are not correctly ordered
         ):
-            noise_ts = random.gauss(mu=0, sigma=sigma_ts)
+            noise_ts = timedelta(seconds=random.gauss(mu=0, sigma=sigma_ts))
             attempts += 1
         unsync_event = replace(
             event,
-            timestamp=event.timestamp + noise_ts + offset
+            timestamp=event.timestamp + noise_ts + timedelta(seconds=offset)
             if i > 0
-            else event.timestamp + offset,
+            else event.timestamp + timedelta(seconds=offset),
             coordinates=Point(
                 x=event.coordinates.x + noise_x,
                 y=event.coordinates.y + noise_y,
