@@ -1,3 +1,4 @@
+from datetime import timedelta
 from functools import partial
 import logging
 from typing import Callable, Literal, Optional
@@ -128,15 +129,15 @@ class EventTrackingSynchronizer:
         # Check the frames with a timestamp before the kickoff event
         # and within 60 seconds after the kickoff event
         nb_frames = len(frames)
+        if nb_frames == 0:
+            return None, timedelta(seconds=0)
+
         frames_to_check = slice(
             0,
             min(nb_frames, int(frame_idx + fps * 60)),
         )
         mask = mask_fn(kickoff_event, frames[frames_to_check])
         scores = score_fn(kickoff_event, frames[frames_to_check], mask)
-
-        if len(scores) == 0:
-            return None, 0
 
         best_idx = np.nanargmin(scores)
         if scores[best_idx] == np.inf:
@@ -227,16 +228,15 @@ class EventTrackingSynchronizer:
                     warnings.warn(
                         f"Could not find kickoff for period {period.id}. Using offset 0."
                     )
-                    period_offset = 0
+                    period_offset = timedelta(seconds=0)
             elif isinstance(offset, (list, tuple)):
                 period_offset = offset[i]
             elif offset is None:
-                period_offset = 0
+                period_offset = timedelta(seconds=0)
             else:
                 raise ValueError("Invalid offset parameter.")
 
-            # period_offset += period.start_timestamp  #FIXME: disabled for now
-            period_offset = 0
+            # period_offset += period.start_timestamp
 
             # Align the events and frames
             alignment = self.strategy(

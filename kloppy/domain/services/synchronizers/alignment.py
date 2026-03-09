@@ -1,5 +1,6 @@
 """Functions for sequence alignment."""
 
+from datetime import timedelta
 from enum import Enum
 from typing import Callable, Optional
 
@@ -24,7 +25,7 @@ def _get_frames_to_check(
     idx_start: int,
     idx_end: int,
     fps: float,
-    offset: float,
+    offset: timedelta,
     window: float,
 ) -> slice:
     return slice(
@@ -33,14 +34,14 @@ def _get_frames_to_check(
             int(
                 fps * event.timestamp.total_seconds()
                 - window / 2 * fps
-                - offset * fps
+                - offset.total_seconds() * fps
             ),
         ),
         min(
             int(
                 fps * event.timestamp.total_seconds()
                 + window / 2 * fps
-                - offset * fps
+                - offset.total_seconds() * fps
             ),
             idx_end,
         ),
@@ -54,13 +55,13 @@ def timestamp_alignment(
     score_fn: Callable[[Event, list[Frame], Optional[list[bool]]], list[float]],
     mask_fn: Callable[[Event, list[Frame]], list[bool]],
     window_fn: Callable[[Event], float],
-    offset: float = 0,
+    offset: timedelta = timedelta(seconds=0),
 ):
     """Alignment based on timestamps."""
     alignment = [
         (
             event_idx,
-            round((event.timestamp.total_seconds() - offset) * fps),
+            round((event.timestamp - offset).total_seconds() * fps),
         )
         for event_idx, event in enumerate(s1)
     ]
@@ -74,7 +75,7 @@ def local_alignment(
     score_fn: Callable[[Event, list[Frame], Optional[list[bool]]], list[float]],
     mask_fn: Callable[[Event, list[Frame]], list[bool]],
     window_fn: Callable[[Event], float],
-    offset: float = 0,
+    offset: timedelta = timedelta(seconds=0),
 ):
     """Local sequence alignment."""
     c = len(s2)
@@ -107,7 +108,7 @@ def greedy_alignment(
     score_fn: Callable[[Event, list[Frame], Optional[list[bool]]], list[float]],
     mask_fn: Callable[[Event, list[Frame]], list[bool]],
     window_fn: Callable[[Event], float],
-    offset: float = np.inf,
+    offset: timedelta = timedelta(seconds=0),
 ):
     """Greedy sequence alignment."""
     c = len(s2)
@@ -141,7 +142,7 @@ def optimal_alignment(
     score_fn: Callable[[Event, list[Frame], Optional[list[bool]]], list[float]],
     mask_fn: Callable[[Event, list[Frame]], list[bool]],
     window_fn: Callable[[Event], float],
-    offset: float = 0,
+    offset: timedelta = timedelta(seconds=0),
     max_score: float = 10,
 ):
     """Optimal sequence alignment using dynamic programming."""

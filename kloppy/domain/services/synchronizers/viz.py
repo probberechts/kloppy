@@ -27,6 +27,16 @@ except ImportError:
     animation = None
     Pitch = None
 
+default_coordinate_system = CustomCoordinateSystem(
+    origin=Origin.BOTTOM_LEFT,
+    vertical_orientation=VerticalOrientation.BOTTOM_TO_TOP,
+    pitch_dimensions=MetricPitchDimensions(
+        x_dim=Dimension(min=0, max=105),
+        y_dim=Dimension(min=0, max=68),
+        standardized=True,
+    ),
+)
+
 
 def _get_dot_style(
     name,
@@ -80,7 +90,6 @@ def _get_dot_style(
 def animate_alignment(
     events,
     frames,
-    pitch_type="metricasports",
     framerate=25,
     figsize=(8, 5.2),
     home_color="#7f63b8",
@@ -94,9 +103,17 @@ def animate_alignment(
     pause_on_event=1,
 ):
     """Animate the alignment between the event and tracking data."""
+    assert len(events) > 0, "No events to animate."
+    assert len(frames) > 0, "No frames to animate."
+    assert (
+        events[0].dataset.metadata.coordinate_system
+        == frames[0].dataset.metadata.coordinate_system
+    ), (
+        "Coordinate systems of events and frames do not match. Please transform the datasets to the same coordinate system before plotting."
+    )
     # set up the figure
     pitch = Pitch(
-        pitch_type=pitch_type,
+        pitch_type=events[0].dataset.metadata.coordinate_system.to_mplsoccer(),
         goal_type="line",
         pitch_width=68,
         pitch_length=105,
@@ -215,7 +232,6 @@ def animate_alignment(
 
 def plot_alignment(
     events,
-    pitch_type="metricasports",
     figsize=(8, 5.2),
     home_color="#7f63b8",
     away_color="#b94b75",
@@ -229,10 +245,8 @@ def plot_alignment(
     """Plot each event in the event dataset with the corresponding frame."""
     # set up the figure
     pitch = Pitch(
-        pitch_type=pitch_type,
+        pitch_type=events[0].dataset.metadata.coordinate_system.to_mplsoccer(),
         goal_type="line",
-        pitch_width=68,
-        pitch_length=105,
     )
     fig, axs = pitch.grid(
         nrows=math.ceil(len(events) / 3),
@@ -364,15 +378,7 @@ def animate_score(
     # to compute the score, but it is not very clean
     transformer = DatasetTransformer(
         from_coordinate_system=coordinate_system,
-        to_coordinate_system=CustomCoordinateSystem(
-            origin=Origin.BOTTOM_LEFT,
-            vertical_orientation=VerticalOrientation.BOTTOM_TO_TOP,
-            pitch_dimensions=MetricPitchDimensions(
-                x_dim=Dimension(min=0, max=105),
-                y_dim=Dimension(min=0, max=68),
-                standardized=True,
-            ),
-        ),
+        to_coordinate_system=default_coordinate_system,
     )
     norm_event = transformer.transform_event(event)
     norm_event.prev_record = event.prev_record
@@ -384,7 +390,7 @@ def animate_score(
 
     # set up the figure
     pitch = Pitch(
-        pitch_type="uefa",
+        pitch_type=default_coordinate_system.to_mplsoccer(),
         goal_type="line",
         pitch_width=68,
         pitch_length=105,

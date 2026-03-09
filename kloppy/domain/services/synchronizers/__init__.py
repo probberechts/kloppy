@@ -1,14 +1,13 @@
 """Approaches for synchronizing data from different sources."""
+
 from . import masking, scoring
-from .synchronizer import EventTrackingSynchronizer
+from . import strategies as _strategies  # register all of them
 from .strategy import (
     SynchronizationStrategy,
     SynchronizationStrategyBuilder,
     create_synchronization_strategy,
 )
-
-# register all of them
-from . import strategies as _strategies
+from .synchronizer import EventTrackingSynchronizer
 
 __all__ = [
     "EventTrackingSynchronizer",

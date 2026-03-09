@@ -1,9 +1,10 @@
-from typing import Callable, Dict, List, Tuple
+from typing import Callable
 
 from kloppy.domain import Event, Frame
+
 from . import config
 
-_SYNCHRONIZATION_STRATEGY_REGISTRY: Dict[str, "SynchronizationStrategy"] = {}
+_SYNCHRONIZATION_STRATEGY_REGISTRY: dict[str, "SynchronizationStrategy"] = {}
 
 
 class SynchronizationStrategy:
@@ -118,11 +119,11 @@ class SynchronizationStrategy:
 
     def __call__(
         self,
-        events: List[Event],
-        frames: List[Frame],
+        events: list[Event],
+        frames: list[Frame],
         fps: float,
         offset: float,
-    ) -> List[Tuple[int, int]]:
+    ) -> list[tuple[int, int]]:
         """Returns the alignment between the events and the frames."""
         alignment = self.alignment_fn(
             events,

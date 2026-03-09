@@ -11,10 +11,6 @@ from kloppy.domain import (
     Orientation,
     Origin,
     Point,
-    SecondSpectrumCoordinateSystem,
-    SkillCornerCoordinateSystem,
-    SportecEventDataCoordinateSystem,
-    SportecTrackingDataCoordinateSystem,
     TrackingDataset,
     VerticalOrientation,
 )
@@ -29,17 +25,12 @@ def normalize_datasets(events: EventDataset, frames: TrackingDataset):
     If the coordinate system of the events and frames are already compatible,
     this function will return a copy of the events.
     """
-    metric_coordinate_systems = (
-        SkillCornerCoordinateSystem,
-        SportecTrackingDataCoordinateSystem,
-        SportecEventDataCoordinateSystem,
-        SecondSpectrumCoordinateSystem,
-    )
     if (
         events.metadata.coordinate_system != frames.metadata.coordinate_system
         or events.metadata.orientation != frames.metadata.orientation
         or not isinstance(
-            events.metadata.coordinate_system, metric_coordinate_systems
+            events.metadata.coordinate_system.pitch_dimensions,
+            MetricPitchDimensions,
         )
         or events.metadata.orientation
         in (Orientation.ACTION_EXECUTING_TEAM, Orientation.BALL_OWNING_TEAM)
@@ -49,7 +40,8 @@ def normalize_datasets(events: EventDataset, frames: TrackingDataset):
         # transforming events, we try to keep the coordinate system and
         # orientation of the frames.
         if not isinstance(
-            frames.metadata.coordinate_system, metric_coordinate_systems
+            frames.metadata.coordinate_system.pitch_dimensions,
+            MetricPitchDimensions,
         ):
             to_coordinate_system = CustomCoordinateSystem(
                 origin=Origin.BOTTOM_LEFT,
