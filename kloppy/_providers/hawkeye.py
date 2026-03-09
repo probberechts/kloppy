@@ -1,7 +1,7 @@
 from collections.abc import Iterable
-from typing import Optional, Union
+from typing import Callable, Optional, Union
 
-from kloppy.domain import TrackingDataset
+from kloppy.domain import Frame, Player, TrackingDataset
 from kloppy.infra.serializers.tracking.hawkeye import (
     HawkEyeDeserializer,
     HawkEyeInputs,
@@ -12,12 +12,14 @@ from kloppy.io import FileLike, expand_inputs
 def load(
     ball_feeds: Union[FileLike, Iterable[FileLike]],
     player_centroid_feeds: Union[FileLike, Iterable[FileLike]],
+    player_joint_feeds: Optional[Iterable[FileLike]] = None,
     meta_data: Optional[FileLike] = None,
     pitch_width: Optional[float] = 68.0,
     pitch_length: Optional[float] = 105.0,
     sample_rate: Optional[float] = None,
     limit: Optional[int] = None,
     coordinates: Optional[str] = None,
+    load_joint_data: Callable[[Frame, Player], bool] = lambda x, y: True,
     show_progress: Optional[bool] = False,
 ) -> TrackingDataset:
     """
@@ -38,6 +40,7 @@ def load(
     Args:
         ball_feeds: The ball tracking data.
         player_centroid_feeds: The player centroid tracking data.
+        player_joint_feeds: The player joint (pose) tracking data.
         meta_data: A json or xml file with metadata about the match. Metadata is optional.
         pitch_length: The length of the pitch (in meters). Ignored if metadata that includes pitch length is provided.
         pitch_width: The width of the pitch (in meters). Ignored if metadata that includes pitch width is provided.
@@ -68,7 +71,9 @@ def load(
         inputs=HawkEyeInputs(
             ball_feeds=ball_feeds,
             player_centroid_feeds=player_centroid_feeds,
+            player_joint_feeds=player_joint_feeds,
             meta_data=meta_data,
+            load_joint_data=load_joint_data,
             show_progress=show_progress,
         )
     )

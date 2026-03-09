@@ -6,6 +6,7 @@ import logging
 import re
 from typing import (
     Any,
+    Callable,
     NamedTuple,
     Optional,
     Union,
@@ -48,7 +49,9 @@ logger = logging.getLogger(__name__)
 class HawkEyeInputs(NamedTuple):
     ball_feeds: Iterable[FileLike]
     player_centroid_feeds: Iterable[FileLike]
+    player_joint_feeds: Optional[Iterable[FileLike]] = None
     meta_data: Optional[FileLike] = None
+    load_joint_data: Callable[[Frame, Player], bool] = lambda x, y: True
     show_progress: Optional[bool] = False
 
 
@@ -241,11 +244,17 @@ class HawkEyeDeserializer(TrackingDataDeserializer[HawkEyeInputs]):
         parsed_teams = {}
         parsed_players = {}
         parsed_periods = {}
-        parsed_periods = {}
         parsed_frames = {}
         frame_rate = None
 
-        it = list(zip_longest(inputs.ball_feeds, inputs.player_centroid_feeds))
+        # Zipping 3 feeds now (ball, centroids, joints)
+        it = list(
+            zip_longest(
+                inputs.ball_feeds,
+                inputs.player_centroid_feeds,
+                inputs.player_joint_feeds or [],
+            )
+        )
         if inputs.show_progress:
             if tqdm is None:
                 warnings.warn(
@@ -254,7 +263,7 @@ class HawkEyeDeserializer(TrackingDataDeserializer[HawkEyeInputs]):
             else:
                 it = tqdm.tqdm(it)
 
-        for ball_feed, player_centroid_feed in it:
+        for ball_feed, player_centroid_feed, player_joint_feed in it:
             # Read the ball and player tracking data feeds.
             with open_as_file(ball_feed) as ball_data_fp:
                 ball_tracking_data = json.load(ball_data_fp)
@@ -389,6 +398,57 @@ class HawkEyeDeserializer(TrackingDataDeserializer[HawkEyeInputs]):
                                 other_data={},
                                 statistics=[],
                             )
+
+            # Parse the player joint data if available
+            if player_joint_feed is not None:
+                with open_as_file(player_joint_feed) as player_joint_data_fp:
+                    player_joint_data = json.load(player_joint_data_fp)
+
+                _period_id = player_joint_data["sequences"]["segment"]
+                _minute = player_joint_data["sequences"]["match-minute"] - 1
+                if _period_id != period_id or _minute != minute:
+                    raise DeserializationError(
+                        "The feed for ball tracking and player joint tracking are not in sync"
+                    )
+
+                with performance_logging(
+                    "Parsing player joint data", logger=logger
+                ):
+                    for detection in player_joint_data["samples"]["people"]:
+                        if detection["role"]["name"] not in [
+                            "Outfielder",
+                            "Goalkeeper",
+                        ]:
+                            continue
+
+                        # Use dynamic object_id instead of hardcoded 'uefaId'
+                        player = parsed_players[
+                            detection["personId"][self.object_id]
+                        ]
+                        for joint in detection["joints"]:
+                            frame_id = int(
+                                (minute * 60 + joint["time"]) * frame_rate
+                            )
+                            if frame_id not in parsed_frames:
+                                logger.warning(
+                                    f"Frame {frame_id} not found in ball or player centroid tracking data"
+                                )
+                                continue
+                            if (
+                                player
+                                not in parsed_frames[frame_id].players_data
+                            ):
+                                logger.warning(
+                                    f"Player {player} not found in player centroid tracking data for frame {frame_id}"
+                                )
+                                continue
+                            if not inputs.load_joint_data(
+                                parsed_frames[frame_id], player
+                            ):
+                                continue
+                            parsed_frames[frame_id].players_data[
+                                player
+                            ].other_data = joint
 
             if self.limit and len(parsed_frames) >= self.limit:
                 break
