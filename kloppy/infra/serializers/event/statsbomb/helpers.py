@@ -1,25 +1,47 @@
-from typing import List, Dict, Optional
+from datetime import timedelta
+from typing import Optional
 
 from kloppy.domain import (
-    Point,
-    Point3D,
-    Team,
+    ActionValue,
     Event,
     Frame,
     Period,
     Player,
     PlayerData,
+    Point,
+    Point3D,
+    Team,
 )
+from kloppy.domain.services.frame_factory import create_frame
 from kloppy.exceptions import DeserializationError
 
 
 def parse_str_ts(timestamp: str) -> float:
     """Parse a HH:mm:ss string timestamp into number of seconds."""
     h, m, s = timestamp.split(":")
-    return int(h) * 3600 + int(m) * 60 + float(s)
+    return timedelta(seconds=int(h) * 3600 + int(m) * 60 + float(s))
 
 
-def get_team_by_id(team_id: int, teams: List[Team]) -> Team:
+def parse_obv_values(raw_event: dict) -> Optional[ActionValue]:
+    game_state_values_data = {}
+    obv_mapping = {
+        "obv_for_before": "action_value_scoring_before",
+        "obv_against_before": "action_value_conceding_before",
+        "obv_for_after": "action_value_scoring_after",
+        "obv_against_after": "action_value_conceding_after",
+    }
+    for sb_name, kloppy_name in obv_mapping.items():
+        obv_value = raw_event.get(sb_name)
+        if obv_value is not None:
+            game_state_values_data[kloppy_name] = obv_value
+
+    if game_state_values_data:
+        game_state_value = ActionValue(name="OBV", **game_state_values_data)
+
+        return game_state_value
+
+
+def get_team_by_id(team_id: int, teams: list[Team]) -> Team:
     """Get a team by its id."""
     if str(team_id) == teams[0].team_id:
         return teams[0]
@@ -29,7 +51,7 @@ def get_team_by_id(team_id: int, teams: List[Team]) -> Team:
         raise DeserializationError(f"Unknown team_id {team_id}")
 
 
-def get_period_by_id(period_id: int, periods: List[Period]) -> Period:
+def get_period_by_id(period_id: int, periods: list[Period]) -> Period:
     """Get a period by its id."""
     for period in periods:
         if period.id == period_id:
@@ -37,9 +59,7 @@ def get_period_by_id(period_id: int, periods: List[Period]) -> Period:
     raise DeserializationError(f"Unknown period_id {period_id}")
 
 
-def parse_coordinates(
-    coordinates: List[float], fidelity_version: int
-) -> Point:
+def parse_coordinates(coordinates: list[float], fidelity_version: int) -> Point:
     """Parse coordinates into a kloppy Point.
 
     Coordinates are cell-based, so 1,1 (low-granularity) or 0.1,0.1
@@ -70,34 +90,50 @@ def parse_coordinates(
             z=coordinates[2] - 0.05,
         )
     else:
-        raise DeserializationError(
-            f"Unknown coordinates format: {coordinates}"
-        )
+        raise DeserializationError(f"Unknown coordinates format: {coordinates}")
 
 
 def parse_freeze_frame(
-    freeze_frame: List[Dict],
+    freeze_frame: list[dict],
     fidelity_version: int,
     home_team: Team,
     away_team: Team,
     event: Event,
-    visible_area: Optional[List] = None,
+    visible_area: Optional[list] = None,
 ) -> Frame:
     """Parse a freeze frame into a kloppy Frame."""
     players_data = {}
 
     def get_player_from_freeze_frame(player_data, team, i):
         if "player" in player_data:
-            return team.get_player_by_id(player_data["player"]["id"])
-        elif player_data.get("actor"):
+            home_player = home_team.get_player_by_id(
+                player_data["player"]["id"]
+            )
+            if home_player:
+                return home_player
+            away_player = away_team.get_player_by_id(
+                player_data["player"]["id"]
+            )
+            if away_player:
+                return away_player
+
+        if player_data.get("actor"):
             return event.player
         elif player_data.get("keeper"):
-            return team.get_player_by_position(position_id=1)
+            # We can later identify the goalkeeper by their position
+            # if we know the formation, but for now we just flag them
+            return Player(
+                player_id=f"T{team.team_id}-E{event.event_id}-{i}",
+                team=team,
+                jersey_no=None,
+                attributes={"goalkeeper": True},
+            )
         else:
             return Player(
                 player_id=f"T{team.team_id}-E{event.event_id}-{i}",
                 team=team,
                 jersey_no=None,
+                attributes={"goalkeeper": False},
             )
 
     for i, freeze_frame_player in enumerate(freeze_frame):
@@ -121,10 +157,11 @@ def parse_freeze_frame(
 
     FREEZE_FRAME_FPS = 25
     frame_id = int(
-        event.period.start_timestamp + event.timestamp * FREEZE_FRAME_FPS
+        event.period.start_timestamp.total_seconds()
+        + event.timestamp.total_seconds() * FREEZE_FRAME_FPS
     )
 
-    return Frame(
+    frame = create_frame(
         frame_id=frame_id,
         ball_coordinates=Point3D(
             x=event.coordinates.x, y=event.coordinates.y, z=0
@@ -136,3 +173,5 @@ def parse_freeze_frame(
         ball_owning_team=event.ball_owning_team,
         other_data={"visible_area": visible_area},
     )
+
+    return frame

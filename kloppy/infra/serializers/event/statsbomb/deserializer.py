@@ -1,7 +1,7 @@
-from typing import NamedTuple, IO, Optional
-import logging
-import json
 from itertools import zip_longest
+import json
+import logging
+from typing import IO, NamedTuple, Optional
 
 from kloppy.domain import (
     DatasetFlag,
@@ -12,15 +12,17 @@ from kloppy.domain import (
     Orientation,
     Period,
     Player,
-    Position,
+    PositionType,
     Provider,
     Team,
 )
 from kloppy.exceptions import DeserializationError
 from kloppy.infra.serializers.event.deserializer import EventDataDeserializer
 from kloppy.utils import performance_logging
+
 from . import specification as SB
 from .helpers import parse_freeze_frame, parse_str_ts
+from .specification import position_types_mapping
 
 logger = logging.getLogger(__name__)
 
@@ -36,9 +38,11 @@ class StatsBombDeserializer(EventDataDeserializer[StatsBombInputs]):
     def provider(self) -> Provider:
         return Provider.STATSBOMB
 
-    def deserialize(self, inputs: StatsBombInputs) -> EventDataset:
+    def deserialize(
+        self, inputs: StatsBombInputs, additional_metadata
+    ) -> EventDataset:
         # Intialize coordinate system transformer
-        self.transformer = self.get_transformer(length=120, width=80)
+        self.transformer = self.get_transformer()
 
         # Load data from JSON files
         # and determine fidelity versions for x/y coordinates
@@ -74,39 +78,40 @@ class StatsBombDeserializer(EventDataDeserializer[StatsBombInputs]):
                 )
                 for event in new_events:
                     if self.should_include_event(event):
-                        # Transform event to the coordinate system
-                        event = self.transformer.transform_event(event)
-
-                        # Add freeze_frame information
                         if "freeze_frame" in event.raw_event.get("shot", {}):
-                            event.freeze_frame = self.transformer.transform_frame(
-                                parse_freeze_frame(
-                                    freeze_frame=event.raw_event["shot"][
-                                        "freeze_frame"
-                                    ],
-                                    home_team=teams[0],
-                                    away_team=teams[1],
-                                    event=event,
-                                    fidelity_version=data_version.shot_fidelity_version,
-                                )
+                            event.freeze_frame = parse_freeze_frame(
+                                freeze_frame=event.raw_event["shot"][
+                                    "freeze_frame"
+                                ],
+                                home_team=teams[0],
+                                away_team=teams[1],
+                                event=event,
+                                fidelity_version=data_version.shot_fidelity_version,
                             )
-
                         if (
                             not event.freeze_frame
                             and event.event_id in three_sixty_data
                         ):
                             freeze_frame = three_sixty_data[event.event_id]
-                            event.freeze_frame = self.transformer.transform_frame(
-                                parse_freeze_frame(
-                                    freeze_frame=freeze_frame["freeze_frame"],
-                                    home_team=teams[0],
-                                    away_team=teams[1],
-                                    event=event,
-                                    fidelity_version=data_version.xy_fidelity_version,
-                                    visible_area=freeze_frame["visible_area"],
-                                )
+                            event.freeze_frame = parse_freeze_frame(
+                                freeze_frame=freeze_frame["freeze_frame"],
+                                home_team=teams[0],
+                                away_team=teams[1],
+                                event=event,
+                                fidelity_version=data_version.xy_fidelity_version,
+                                visible_area=freeze_frame["visible_area"],
                             )
+                        # Transform event to the coordinate system
+                        event = self.transformer.transform_event(event)
                         events.append(event)
+
+        if "home_coach" in additional_metadata:
+            home_coach = additional_metadata.pop("home_coach")
+            teams[0].coach = home_coach
+
+        if "away_coach" in additional_metadata:
+            away_coach = additional_metadata.pop("away_coach")
+            teams[1].coach = away_coach
 
         metadata = Metadata(
             teams=teams,
@@ -118,8 +123,28 @@ class StatsBombDeserializer(EventDataDeserializer[StatsBombInputs]):
             score=None,
             provider=Provider.STATSBOMB,
             coordinate_system=self.transformer.get_to_coordinate_system(),
+            **additional_metadata,
         )
-        return EventDataset(metadata=metadata, records=events)
+        dataset = EventDataset(metadata=metadata, records=events)
+        # We can now update GK identities in the freeze frames
+        # because we know the positions of the GKs at the event times
+        for event in dataset:
+            if not event.freeze_frame:
+                continue
+
+            new_players_data = {}
+            for player, data in event.freeze_frame.players_data.items():
+                if player.attributes.get("goalkeeper", False):
+                    actual_gk = player.team.get_player_by_position(
+                        position=PositionType.Goalkeeper,
+                        time=event.time,
+                    )
+                    new_players_data[actual_gk] = data
+                else:
+                    new_players_data[player] = data
+
+            event.freeze_frame.players_data = new_players_data
+        return dataset
 
     def load_data(self, inputs: StatsBombInputs):
         raw_events = {}
@@ -176,14 +201,12 @@ class StatsBombDeserializer(EventDataDeserializer[StatsBombInputs]):
 
         # Create players and teams
         player_positions = {
-            str(player["player"]["id"]): Position(
-                position_id=str(player["position"]["id"]),
-                name=player["position"]["name"],
-            )
+            str(player["player"]["id"]): position_types_mapping[
+                player["position"]["id"]
+            ]
             for raw_event in starting_xi_events
             for player in raw_event["tactics"]["lineup"]
         }
-
         starting_formations = {
             raw_event["team"]["id"]: FormationType(
                 "-".join(list(str(raw_event["tactics"]["formation"])))
@@ -205,7 +228,9 @@ class StatsBombDeserializer(EventDataDeserializer[StatsBombInputs]):
                     name=player["player_name"],
                     jersey_no=int(player["jersey_number"]),
                     starting=str(player["player_id"]) in player_positions,
-                    position=player_positions.get(str(player["player_id"])),
+                    starting_position=player_positions.get(
+                        str(player["player_id"])
+                    ),
                 )
                 for player in lineup["lineup"]
             ]
@@ -216,27 +241,22 @@ class StatsBombDeserializer(EventDataDeserializer[StatsBombInputs]):
         return [home_team, away_team]
 
     def create_periods(self, raw_events):
-        half_start_and_end_events = [
-            event.raw_event
-            for event in raw_events.values()
-            if SB.EVENT_TYPE(event.raw_event["type"])
-            in [
-                SB.EVENT_TYPE.HALF_START,
-                SB.EVENT_TYPE.HALF_END,
-            ]
-        ][
-            ::2
-        ]  # recorded for each team, take every other
+        half_start_events = {}
+        half_end_events = {}
+        for event in raw_events.values():
+            event_type = SB.EVENT_TYPE(event.raw_event["type"])
+            period = event.raw_event["period"]
+
+            if event_type == SB.EVENT_TYPE.HALF_START:
+                half_start_events[period] = event.raw_event
+            elif event_type == SB.EVENT_TYPE.HALF_END:
+                half_end_events[period] = event.raw_event
+
         periods = []
         for start_event, end_event in zip_longest(
-            half_start_and_end_events[::2], half_start_and_end_events[1::2]
+            half_start_events.values(), half_end_events.values()
         ):
-            if (
-                start_event is None
-                or SB.EVENT_TYPE(start_event["type"])
-                != SB.EVENT_TYPE.HALF_START
-                or SB.EVENT_TYPE(end_event["type"]) != SB.EVENT_TYPE.HALF_END
-            ):
+            if start_event is None or end_event is None:
                 raise DeserializationError(
                     "Failed to determine start and end time of periods."
                 )

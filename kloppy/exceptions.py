@@ -14,6 +14,10 @@ class OrientationError(KloppyError):
     pass
 
 
+class MissingDimensionError(KloppyError):
+    pass
+
+
 class OrphanedRecordError(KloppyError):
     pass
 
@@ -39,4 +43,8 @@ class KloppyParameterError(KloppyError):
 
 
 class SynchronizationError(KloppyError):
+    pass
+
+
+class DeserializationWarning(Warning):
     pass

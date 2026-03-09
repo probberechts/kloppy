@@ -1,18 +1,18 @@
+from datetime import timedelta
 from pathlib import Path
+
 import pytest
 
 from kloppy import metrica
 from kloppy.domain import (
-    Orientation,
-    Period,
-    Provider,
-    AttackingDirection,
-    SetPieceType,
     BodyPart,
-    EventDataset,
-    Point,
-    SetPieceQualifier,
     BodyPartQualifier,
+    EventDataset,
+    Orientation,
+    Point,
+    Provider,
+    SetPieceQualifier,
+    SetPieceType,
 )
 from kloppy.domain.models.common import DatasetType
 
@@ -36,27 +36,40 @@ class TestMetricaEvents:
         """It should parse the metadata correctly."""
         assert dataset.metadata.provider == Provider.METRICA
         assert len(dataset.metadata.periods) == 2
-        assert dataset.metadata.orientation is Orientation.HOME_TEAM
+        assert dataset.metadata.orientation is Orientation.HOME_AWAY
         assert dataset.metadata.teams[0].name == "Team A"
         assert dataset.metadata.teams[1].name == "Team B"
         player = dataset.metadata.teams[0].players[10]
         assert player.player_id == "Track_11"
         assert player.jersey_no == 11
         assert str(player) == "Track_11"
-        assert player.position.name == "Goalkeeper"
+        assert player.starting_position.name == "Goalkeeper"
 
-        assert dataset.metadata.periods[0] == Period(
-            id=1,
-            start_timestamp=14.44,
-            end_timestamp=2783.76,
-            attacking_direction=AttackingDirection.NOT_SET,
+        assert dataset.metadata.periods[0].id == 1
+        assert dataset.metadata.periods[0].start_timestamp == timedelta(
+            seconds=18
         )
-        assert dataset.metadata.periods[1] == Period(
-            id=2,
-            start_timestamp=2803.6,
-            end_timestamp=5742.12,
-            attacking_direction=AttackingDirection.NOT_SET,
+        assert dataset.metadata.periods[0].end_timestamp == timedelta(
+            seconds=19.96
         )
+        assert dataset.metadata.periods[1].id == 2
+        assert dataset.metadata.periods[1].start_timestamp == timedelta(
+            seconds=26
+        )
+        assert dataset.metadata.periods[1].end_timestamp == timedelta(
+            seconds=27.96
+        )
+
+    def test_timestamps(self, dataset: EventDataset):
+        """It should parse the timestamps correctly."""
+        # note: these timestamps are odd because the metadata and event data
+        # are from different matches
+        assert dataset.events[0].timestamp == timedelta(
+            seconds=14.44
+        ) - timedelta(seconds=450 / 25)  # kickoff first half
+        assert dataset.events[1749].timestamp == timedelta(
+            seconds=2803.6
+        ) - timedelta(seconds=650 / 25)  # kickoff second half
 
     def test_coordinates(self, dataset: EventDataset):
         """It should parse the coordinates of events correctly."""

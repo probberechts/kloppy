@@ -1,39 +1,38 @@
 from dataclasses import dataclass
-from typing import Set
 
 from kloppy.domain import (
+    CardEvent,
+    CardType,
     Event,
     EventDataset,
     Player,
-    SubstitutionEvent,
     PlayerOffEvent,
     PlayerOnEvent,
-    CardEvent,
-    CardType,
-    Provider,
+    SubstitutionEvent,
 )
+
 from ..builder import StateBuilder
 
 
 @dataclass
 class Lineup:
-    players: Set[Player]
+    players: set[Player]
 
 
 class LineupStateBuilder(StateBuilder):
     def initial_state(self, dataset: EventDataset) -> Lineup:
         return Lineup(
             players=(
-                set(
+                {
                     player
                     for player in dataset.metadata.teams[0].players
                     if player.starting
-                )
-                | set(
+                }
+                | {
                     player
                     for player in dataset.metadata.teams[1].players
                     if player.starting
-                )
+                }
             )
         )
 

@@ -1,20 +1,18 @@
-from typing import Union, Optional, Literal, TypeVar, Type
-from collections.abc import Sequence
+from typing import Literal, Optional, TypeVar, Union
 
 from .domain import (
+    CoordinateSystem,
     Dataset,
+    DatasetTransformer,
     EventDataset,
-    TrackingDataset,
-    Dimension,
+    EventTrackingSynchronizer,
     Orientation,
     PitchDimensions,
-    EventTrackingSynchronizer,
-    SynchronizationStrategy,
-    create_synchronization_strategy,
-    DatasetTransformer,
     Provider,
+    SynchronizationStrategy,
+    TrackingDataset,
     build_coordinate_system,
-    CoordinateSystem,
+    create_synchronization_strategy,
 )
 
 T = TypeVar("T", bound=Dataset)
@@ -23,7 +21,7 @@ T = TypeVar("T", bound=Dataset)
 def transform(
     dataset: Dataset,
     to_orientation: Optional[Union[Orientation, str]] = None,
-    to_pitch_dimensions: Optional[Union[PitchDimensions, Sequence]] = None,
+    to_pitch_dimensions: Optional[PitchDimensions] = None,
     to_coordinate_system: Optional[
         Union[CoordinateSystem, Provider, str]
     ] = None,
@@ -32,28 +30,19 @@ def transform(
     if to_orientation is not None and isinstance(to_orientation, str):
         to_orientation = Orientation[to_orientation.upper()]
 
-    # convert raw pitch dimensions to object
-    if to_pitch_dimensions is not None and isinstance(
-        to_pitch_dimensions, Sequence
-    ):
-        to_pitch_dimensions = PitchDimensions(
-            x_dim=Dimension(*to_pitch_dimensions[0]),
-            y_dim=Dimension(*to_pitch_dimensions[1]),
-        )
-
     # convert raw coordinate system to object
     if to_coordinate_system is not None:
         if isinstance(to_coordinate_system, str):
             to_coordinate_system = build_coordinate_system(
                 provider=Provider[to_coordinate_system.upper()],
-                length=dataset.metadata.coordinate_system.length,
-                width=dataset.metadata.coordinate_system.width,
+                pitch_length=dataset.metadata.coordinate_system.pitch_length,
+                pitch_width=dataset.metadata.coordinate_system.pitch_width,
             )
         elif isinstance(to_coordinate_system, Provider):
             to_coordinate_system = build_coordinate_system(
                 provider=to_coordinate_system,
-                length=dataset.metadata.coordinate_system.length,
-                width=dataset.metadata.coordinate_system.width,
+                pitch_length=dataset.metadata.coordinate_system.pitch_length,
+                pitch_width=dataset.metadata.coordinate_system.pitch_width,
             )
 
     return DatasetTransformer.transform_dataset(
@@ -71,7 +60,7 @@ def sync(
     offset: Optional[Union[float, Literal["auto"]]] = "auto",
     show_progress: bool = False,
     **kwargs,
-) -> Type[T]:
+) -> type[T]:
     """Synchronize two datasets."""
     if not (
         isinstance(from_dataset, EventDataset)

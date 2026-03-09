@@ -1,67 +1,56 @@
-import os
 from collections import defaultdict
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import cast
 
 import pytest
 
+from kloppy import statsbomb
 from kloppy.domain import (
-    build_coordinate_system,
-    AttackingDirection,
-    TakeOnResult,
-    Dimension,
     BallState,
-    PitchDimensions,
-    CardQualifier,
-    DatasetFlag,
-    CarryResult,
-    InterceptionResult,
-    SubstitutionEvent,
     BodyPart,
     BodyPartQualifier,
+    CardQualifier,
+    CarryResult,
+    DatasetFlag,
     DatasetType,
+    Dimension,
     DuelQualifier,
-    DuelType,
     DuelResult,
+    DuelType,
+    EventDataset,
+    FormationType,
+    ImperialPitchDimensions,
+    InterceptionResult,
     Orientation,
     PassResult,
     Point,
     Point3D,
+    PositionType,
     Provider,
-    FormationType,
     SetPieceQualifier,
     SetPieceType,
-    Position,
     ShotResult,
-    EventDataset,
+    SubstitutionEvent,
+    TakeOnResult,
+    Time,
+    build_coordinate_system,
 )
-
-from kloppy.exceptions import DeserializationError
-from kloppy import statsbomb
 from kloppy.domain.models.event import (
     CardType,
+    CounterAttackQualifier,
+    EventType,
+    GoalkeeperActionType,
+    GoalkeeperQualifier,
     PassQualifier,
     PassType,
-    EventType,
-    GoalkeeperQualifier,
-    GoalkeeperActionType,
+    UnderPressureQualifier,
 )
-from kloppy.infra.serializers.event.statsbomb.helpers import (
-    parse_str_ts,
-)
+from kloppy.exceptions import DeserializationError
+from kloppy.infra.serializers.event.statsbomb.helpers import parse_str_ts
 import kloppy.infra.serializers.event.statsbomb.specification as SB
 
-ENABLE_PLOTTING = True
 API_URL = "https://raw.githubusercontent.com/statsbomb/open-data/master/data/"
-
-
-def test_with_visualization():
-    if (
-        "KLOPPY_TESTWITHVIZ" in os.environ
-        and os.environ["KLOPPY_TESTWITHVIZ"] == "1"
-    ):
-        return True
-    return False
 
 
 @pytest.fixture(scope="module")
@@ -72,6 +61,13 @@ def dataset() -> EventDataset:
         lineup_data=f"{API_URL}/lineups/3794687.json",
         three_sixty_data=f"{API_URL}/three-sixty/3794687.json",
         coordinates="statsbomb",
+        additional_metadata={
+            "date": datetime(2020, 8, 23, 0, 0, tzinfo=timezone.utc),
+            "game_week": "7",
+            "game_id": "3888787",
+            "home_coach": "R. Martínez Montoliù",
+            "away_coach": "F. Fernandes da Costa Santos",
+        },
     )
     assert dataset.dataset_type == DatasetType.EVENT
     return dataset
@@ -108,9 +104,7 @@ class TestStatsBombMetadata:
 
     def test_orientation(self, dataset):
         """It should set the action-executing-team orientation"""
-        assert (
-            dataset.metadata.orientation == Orientation.ACTION_EXECUTING_TEAM
-        )
+        assert dataset.metadata.orientation == Orientation.ACTION_EXECUTING_TEAM
 
     def test_framerate(self, dataset):
         """It should set the frame rate to None"""
@@ -137,27 +131,66 @@ class TestStatsBombMetadata:
         """It should set the correct player position from the events"""
         # Starting players get their position from the STARTING_XI event
         player = dataset.metadata.teams[0].get_player_by_id("3089")
-        assert player.position == Position(
-            position_id="18", name="Right Attacking Midfield", coordinates=None
-        )
+
+        assert player.starting_position == PositionType.RightAttackingMidfield
         assert player.starting
 
-        # Substituted players don't have a position
+        # Substituted players have a position
         sub_player = dataset.metadata.teams[0].get_player_by_id("5630")
-        assert sub_player.position is None
+        assert sub_player.starting_position is None
+        assert sub_player.positions.last() is not None
         assert not sub_player.starting
+
+        # Get player by position and time
+        periods = dataset.metadata.periods
+        period_1 = periods[0]
+        period_2 = periods[1]
+
+        home_starting_gk = dataset.metadata.teams[0].get_player_by_position(
+            PositionType.Goalkeeper,
+            time=Time(period=period_1, timestamp=timedelta(seconds=0)),
+        )
+        assert home_starting_gk.player_id == "3509"  # Thibaut Courtois
+
+        home_starting_lam = dataset.metadata.teams[0].get_player_by_position(
+            PositionType.LeftAttackingMidfield,
+            time=Time(period=period_1, timestamp=timedelta(seconds=0)),
+        )
+        assert home_starting_lam.player_id == "3621"  # Eden Hazard
+
+        home_ending_lam = dataset.metadata.teams[0].get_player_by_position(
+            PositionType.LeftAttackingMidfield,
+            time=Time(period=period_2, timestamp=timedelta(seconds=45 * 60)),
+        )
+        assert home_ending_lam.player_id == "5633"  # Yannick Ferreira Carrasco
+
+        away_starting_gk = dataset.metadata.teams[1].get_player_by_position(
+            PositionType.Goalkeeper,
+            time=Time(period=period_1, timestamp=timedelta(seconds=92)),
+        )
+        assert away_starting_gk.player_id == "5205"  # Rui Patricio
+
+        assert PositionType.Goalkeeper.position_group == PositionType.Goalkeeper
+        assert (
+            PositionType.CenterDefensiveMidfield.position_group
+            == PositionType.Midfielder
+        )
+        assert (
+            PositionType.AttackingMidfield.position_group
+            == PositionType.Midfielder
+        )
+        assert PositionType.CenterBack.position_group == PositionType.Defender
+        assert PositionType.Striker.position_group == PositionType.Attacker
 
     def test_periods(self, dataset):
         """It should create the periods"""
         assert len(dataset.metadata.periods) == 2
         assert dataset.metadata.periods[0].id == 1
-        assert dataset.metadata.periods[0].start_timestamp == 0.0
+        assert dataset.metadata.periods[0].start_timestamp == parse_str_ts(
+            "00:00:00.000"
+        )
         assert dataset.metadata.periods[0].end_timestamp == parse_str_ts(
             "00:47:38.122"
-        )
-        assert (
-            dataset.metadata.periods[0].attacking_direction
-            == AttackingDirection.NOT_SET
         )
         assert dataset.metadata.periods[1].id == 2
         assert dataset.metadata.periods[1].start_timestamp == parse_str_ts(
@@ -166,21 +199,17 @@ class TestStatsBombMetadata:
         assert dataset.metadata.periods[1].end_timestamp == parse_str_ts(
             "00:47:38.122"
         ) + parse_str_ts("00:50:29.638")
-        assert (
-            dataset.metadata.periods[1].attacking_direction
-            == AttackingDirection.NOT_SET
-        )
 
     def test_pitch_dimensions(self, dataset):
         """It should set the correct pitch dimensions"""
-        assert dataset.metadata.pitch_dimensions == PitchDimensions(
-            x_dim=Dimension(0, 120), y_dim=Dimension(0, 80)
+        assert dataset.metadata.pitch_dimensions == ImperialPitchDimensions(
+            x_dim=Dimension(0, 120), y_dim=Dimension(0, 80), standardized=True
         )
 
     def test_coordinate_system(self, dataset):
         """It should set the correct coordinate system"""
         assert dataset.metadata.coordinate_system == build_coordinate_system(
-            Provider.STATSBOMB, width=80, length=120
+            Provider.STATSBOMB
         )
 
     @pytest.mark.xfail
@@ -196,6 +225,32 @@ class TestStatsBombMetadata:
             dataset.metadata.flags
             == DatasetFlag.BALL_OWNING_TEAM | DatasetFlag.BALL_STATE
         )
+
+    def test_enriched_metadata(self, dataset):
+        date = dataset.metadata.date
+        if date:
+            assert isinstance(date, datetime)
+            assert date == datetime(2020, 8, 23, 0, 0, tzinfo=timezone.utc)
+
+        game_week = dataset.metadata.game_week
+        if game_week:
+            assert isinstance(game_week, str)
+            assert game_week == "7"
+
+        game_id = dataset.metadata.game_id
+        if game_id:
+            assert isinstance(game_id, str)
+            assert game_id == "3888787"
+
+        home_coach = dataset.metadata.teams[0].coach
+        if home_coach:
+            assert isinstance(home_coach, str)
+            assert home_coach == "R. Martínez Montoliù"
+
+        away_coach = dataset.metadata.teams[1].coach
+        if away_coach:
+            assert isinstance(away_coach, str)
+            assert away_coach == "F. Fernandes da Costa Santos"
 
 
 class TestStatsBombEvent:
@@ -216,6 +271,17 @@ class TestStatsBombEvent:
         assert event.period.id == 1
         assert event.timestamp == parse_str_ts("00:41:31.122")
         assert event.ball_state == BallState.ALIVE
+
+    def test_timestamp(self, dataset):
+        """It should set the correct timestamp, reset to zero after each period"""
+        kickoff_p1 = dataset.get_event_by_id(
+            "8022c113-e349-4b0b-b4a7-a3bb662535f8"
+        )
+        assert kickoff_p1.timestamp == parse_str_ts("00:00:00.840")
+        kickoff_p2 = dataset.get_event_by_id(
+            "b3199171-507c-42a3-b4c4-9e609d7a98f6"
+        )
+        assert kickoff_p2.timestamp == parse_str_ts("00:00:00.848")
 
     def test_related_events(self, dataset: EventDataset):
         """Test whether related events are properly linked"""
@@ -241,7 +307,9 @@ class TestStatsBombEvent:
 
         assert ball_out_events[0].ball_state == BallState.DEAD
 
-    def test_freeze_frame_shot(self, dataset: EventDataset, base_dir: Path):
+    def test_freeze_frame_shot(
+        self, dataset: EventDataset, base_dir: Path, with_visualization: bool
+    ):
         """Test if shot freeze-frame is properly parsed and attached to shot events"""
         shot_event = dataset.get_event_by_id(
             "a5c60797-631e-418a-9f24-1e9779cb2b42"
@@ -267,7 +335,7 @@ class TestStatsBombEvent:
             91.45, 28.15
         )
 
-        if test_with_visualization():
+        if with_visualization:
             import matplotlib.pyplot as plt
             from mplsoccer import VerticalPitch
 
@@ -282,7 +350,10 @@ class TestStatsBombEvent:
             def get_color(player):
                 if player.team == shot_event.player.team:
                     return "#b94b75"
-                elif player.position.position_id == "1":
+                elif (
+                    player.starting_position.position_group
+                    == PositionType.Goalkeeper
+                ):
                     return "#c15ca5"
                 else:
                     return "#7f63b8"
@@ -349,7 +420,9 @@ class TestStatsBombEvent:
                 base_dir / "outputs" / "test_statsbomb_freeze_frame_shot.png"
             )
 
-    def test_freeze_frame_360(self, dataset: EventDataset, base_dir: Path):
+    def test_freeze_frame_360(
+        self, dataset: EventDataset, base_dir: Path, with_visualization: bool
+    ):
         """Test if 360 freeze-frame is properly parsed and attached to shot events"""
         pass_event = dataset.get_event_by_id(
             "8022c113-e349-4b0b-b4a7-a3bb662535f8"
@@ -425,7 +498,7 @@ class TestStatsBombEvent:
             abs=1e-2,
         )
 
-        if test_with_visualization():
+        if with_visualization:
             import matplotlib.pyplot as plt
             from mplsoccer import Pitch
 
@@ -482,6 +555,25 @@ class TestStatsBombEvent:
                 base_dir / "outputs" / "test_statsbomb_freeze_frame_360.png"
             )
 
+    def test_freeze_frame_player_identities(self, dataset: EventDataset):
+        """It should set the identities of the player that executed the event and the goalkeepers."""
+        event = dataset.get_event_by_id("0f525aa9-70f4-4f85-8a8d-6103722aee50")
+        home_team, away_team = dataset.metadata.teams
+        # The goalkeeper should be identified
+        keeper = next(p for p in away_team.players if p.player_id == "5205")
+        assert keeper in event.freeze_frame.players_coordinates
+        # The player that executed the event should be identified
+        player = next(p for p in away_team.players if p.player_id == "5209")
+        assert player in event.freeze_frame.players_coordinates
+        # All other players should be anonymous
+        for player in event.freeze_frame.players_coordinates.keys():
+            if player not in [keeper, player]:
+                assert player.id.startswith(
+                    "T780-E0f525aa9-70f4-4f85-8a8d-6103722aee50-"
+                )
+                assert player.team in [home_team, away_team]
+                assert player.name is None
+
     def test_correct_normalized_deserialization(self):
         """Test if the normalized deserialization is correct"""
         dataset = statsbomb.load(
@@ -503,16 +595,24 @@ class TestStatsBombEvent:
         )
         freeze_frame = shot_event.freeze_frame
         player_3089 = dataset.metadata.teams[0].get_player_by_id("3089")
-        assert freeze_frame.players_coordinates[
-            player_3089
-        ].x == pytest.approx(0.762, abs=1e-2)
-        assert freeze_frame.players_coordinates[
-            player_3089
-        ].y == pytest.approx(0.352, abs=1e-2)
+        assert freeze_frame.players_coordinates[player_3089].x == pytest.approx(
+            0.756, abs=1e-2
+        )
+        assert freeze_frame.players_coordinates[player_3089].y == pytest.approx(
+            0.340, abs=1e-2
+        )
 
         # The 360 freeze-frame should have standardized coordinates
         pass_event = dataset.get_event_by_id(
             "8022c113-e349-4b0b-b4a7-a3bb662535f8"
+        )
+        assert (
+            pass_event.coordinates.x
+            == pass_event.freeze_frame.ball_coordinates.x
+        )
+        assert (
+            pass_event.coordinates.y
+            == pass_event.freeze_frame.ball_coordinates.y
         )
         coordinates_per_team = defaultdict(list)
         for (
@@ -520,31 +620,30 @@ class TestStatsBombEvent:
             coordinates,
         ) in pass_event.freeze_frame.players_coordinates.items():
             coordinates_per_team[player.team.name].append(coordinates)
-        print(coordinates_per_team)
         assert coordinates_per_team == {
             "Belgium": [
-                Point(x=0.29992169834015553, y=0.5208156671179599),
-                Point(x=0.30643713954672475, y=0.7026264079766127),
-                Point(x=0.3214467545271119, y=0.3826089652330575),
-                Point(x=0.405612967947393, y=0.9422736509345233),
-                Point(x=0.4062973621807315, y=0.0482915505598324),
-                Point(x=0.42465606231382946, y=0.5964959025774841),
-                Point(x=0.4508398556294095, y=0.5289610882963541),
-                Point(x=0.4890186975946768, y=0.2568344237508965),
-                Point(x=0.4950593030298559, y=0.7029586200529815),
-                Point(x=0.4995833333333334, y=0.499375),
+                Point(x=0.30230680550305883, y=0.5224074534269804),
+                Point(x=0.3084765294211162, y=0.7184206360532097),
+                Point(x=0.3226897158515237, y=0.37349986446702277),
+                Point(x=0.4023899669270551, y=0.9477821783616865),
+                Point(x=0.40303804636433893, y=0.04368333723843663),
+                Point(x=0.4212117680196045, y=0.6039661694463063),
+                Point(x=0.4485925347438968, y=0.5311757597543106),
+                Point(x=0.48851669519900487, y=0.23786065306469226),
+                Point(x=0.494833442596935, y=0.7187789039787056),
+                Point(x=0.49956428571428574, y=0.49932720588235296),
             ],
             "Portugal": [
-                Point(x=0.5007398055585528, y=0.64528577145353),
-                Point(x=0.503027413811032, y=0.8161700273569469),
-                Point(x=0.5276528464860737, y=0.2579702535077385),
-                Point(x=0.5278342018640673, y=0.3780770836091537),
-                Point(x=0.5771632092108575, y=0.5977748576718983),
-                Point(x=0.6031968709341459, y=0.5636937522375899),
-                Point(x=0.661570167297097, y=0.3648423832684863),
-                Point(x=0.6653717429879116, y=0.7616501561039648),
-                Point(x=0.665577307051358, y=0.5960104748540174),
-                Point(x=0.6887022647928279, y=0.4433104586034662),
+                Point(x=0.5007736252412294, y=0.6565826947047873),
+                Point(x=0.5031658098709648, y=0.8337119724588331),
+                Point(x=0.5289169766111513, y=0.23908556750834548),
+                Point(x=0.5291066225207104, y=0.36861254114712655),
+                Point(x=0.5806906702033539, y=0.605345434744204),
+                Point(x=0.6059524111158714, y=0.568591301432695),
+                Point(x=0.6612283488962987, y=0.3543398250934656),
+                Point(x=0.6648282083259679, y=0.7820736977591778),
+                Point(x=0.6650228649084968, y=0.6034426689602147),
+                Point(x=0.6869207840759295, y=0.43896225927824783),
             ],
         }
 
@@ -571,10 +670,9 @@ class TestStatsBombPassEvent:
         # A pass should have end coordinates
         assert pass_event.receiver_coordinates == Point(86.15, 53.35)
         # A pass should have an end timestamp
-        assert (
-            pass_event.receive_timestamp
-            == parse_str_ts("00:35:21.533") + 0.634066
-        )
+        assert pass_event.receive_timestamp == parse_str_ts(
+            "00:35:21.533"
+        ) + timedelta(seconds=0.634066)
         # A pass should have a receiver
         assert (
             pass_event.receiver_player.name
@@ -599,6 +697,7 @@ class TestStatsBombPassEvent:
             PassType.CROSS,
             PassType.HIGH_PASS,
             PassType.LONG_BALL,
+            PassType.SHOT_ASSIST,
         ]
 
     def test_set_piece(self, dataset: EventDataset):
@@ -631,6 +730,22 @@ class TestStatsBombPassEvent:
         ]
         assert duel.result == DuelResult.WON
 
+    def test_synthetic_out_events(self, dataset: EventDataset):
+        """It should add synthetic ball out events after the (failed) receipt."""
+        pass_event = dataset.get_event_by_id(
+            "36c7ed4c-031e-4dd4-8557-3d9b8ee8762f"
+        )
+        assert pass_event.next().event_name == "Ball Receipt*"
+        assert pass_event.next().next().event_name == "ball_out"
+        assert (
+            pass_event.next().next().event_id
+            == "out-ac99f2ec-8138-4061-9bd3-bdc79ae7358e"
+        )
+        assert (
+            pass_event.next().next().raw_event["id"]
+            == "36c7ed4c-031e-4dd4-8557-3d9b8ee8762f"
+        )
+
 
 class TestStatsBombShotEvent:
     """Tests related to deserialzing 16/Shot events"""
@@ -648,11 +763,18 @@ class TestStatsBombShotEvent:
         # A shot event should have end coordinates
         assert shot.result_coordinates == Point3D(119.95, 48.35, 0.45)
         # A shot event should have a body part
-        assert (
-            shot.get_qualifier_value(BodyPartQualifier) == BodyPart.LEFT_FOOT
-        )
+        assert shot.get_qualifier_value(BodyPartQualifier) == BodyPart.LEFT_FOOT
         # An open play shot should not have a set piece qualifier
         assert shot.get_qualifier_value(SetPieceQualifier) is None
+        # A shot event should have a xG value
+        assert (
+            next(
+                statistic
+                for statistic in shot.statistics
+                if statistic.name == "xG"
+            ).value
+            == 0.12441643
+        )
 
     def test_free_kick(self, dataset: EventDataset):
         """It should add set piece qualifiers to free kick shots"""
@@ -673,6 +795,22 @@ class TestStatsBombShotEvent:
             DuelType.AERIAL,
         ]
         assert duel.result == DuelResult.WON
+
+    def test_synthetic_out_events(self, dataset: EventDataset):
+        """It should add synthetic ball out events after the goalkeeper event."""
+        shot_event = dataset.get_event_by_id(
+            "221ce1cb-d70e-47aa-8d7e-c427a1c952ba"
+        )
+        assert shot_event.next().event_name == "Goal Keeper"
+        assert shot_event.next().next().event_name == "ball_out"
+        assert (
+            shot_event.next().next().event_id
+            == "out-64c5cfad-86a3-4d61-86c8-8784a4834682"
+        )
+        assert (
+            shot_event.next().next().raw_event["id"]
+            == "221ce1cb-d70e-47aa-8d7e-c427a1c952ba"
+        )
 
 
 class TestStatsBombInterceptionEvent:
@@ -735,9 +873,7 @@ class TestStatsBombClearanceEvent:
         # A clearance has no result
         assert clearance.result is None
         # A clearance should have a bodypart (if data version >= 1.1)
-        assert (
-            clearance.get_qualifier_value(BodyPartQualifier) == BodyPart.HEAD
-        )
+        assert clearance.get_qualifier_value(BodyPartQualifier) == BodyPart.HEAD
 
     def test_aerial_duel(self, dataset: EventDataset):
         """It should split clearances that follow an aerial duel into two events"""
@@ -772,7 +908,9 @@ class TestStatsBombMiscontrolEvent:
 
     def test_aerial_duel(self, dataset: EventDataset):
         """It should split clearances that follow an aerial duel into two events"""
-        assert True  # can happen according to the documentation, but not in the dataset
+        assert (
+            True
+        )  # can happen according to the documentation, but not in the dataset
 
 
 class TestStatsBombDribbleEvent:
@@ -790,8 +928,6 @@ class TestStatsBombDribbleEvent:
         )
         # A dribble should have a result
         assert dribble.result == TakeOnResult.INCOMPLETE
-        # A dribble has no qualifiers
-        assert dribble.qualifiers is None
 
     def test_result_out(self, dataset: EventDataset):
         """The result of a dribble can be TakeOnResult.OUT"""
@@ -814,12 +950,12 @@ class TestStatsBombCarryEvent:
         carry = dataset.get_event_by_id("fab6360a-cbc2-45a3-aafa-5f3ec81eb9c7")
         # A carry is always successful
         assert carry.result == CarryResult.COMPLETE
-        # A carry has no qualifiers
-        assert carry.qualifiers is None
         # A carry should have an end location
         assert carry.end_coordinates == Point(21.65, 54.85)
         # A carry should have an end timestamp
-        assert carry.end_timestamp == parse_str_ts("00:20:11.457") + 1.365676
+        assert carry.end_timestamp == parse_str_ts("00:20:11.457") + timedelta(
+            seconds=1.365676
+        )
 
 
 class TestStatsBombDuelEvent:
@@ -829,8 +965,8 @@ class TestStatsBombDuelEvent:
         """It should deserialize all duel and 50/50 events"""
         events = dataset.find_all("duel")
         assert (
-            len(events) == 59 + 4 + 26
-        )  # duels + 50/50 + aerial won attribute
+            len(events) == 59 + 4 + 26 + 4
+        )  # duels + 50/50 + aerial won attribute + failed recoveries
 
     def test_attributes(self, dataset: EventDataset):
         """Verify specific attributes of duels"""
@@ -862,6 +998,22 @@ class TestStatsBombDuelEvent:
             DuelType.LOOSE_BALL,
             DuelType.GROUND,
         ]
+
+    def test_counter_attack_qualifier(self, dataset: EventDataset):
+        duel = dataset.get_event_by_id("9e5281ac-1fee-4a51-b6a5-78e99c22397e")
+        assert duel.get_qualifier_value(CounterAttackQualifier) is True
+
+        kick_off = dataset.get_event_by_id(
+            "8022c113-e349-4b0b-b4a7-a3bb662535f8"
+        )
+        assert kick_off.get_qualifier_value(CounterAttackQualifier) is None
+
+        counter_attack_events = [
+            event
+            for event in dataset.events
+            if event.get_qualifier_value(CounterAttackQualifier) is True
+        ]
+        assert len(counter_attack_events) == 20
 
 
 class TestStatsBombGoalkeeperEvent:
@@ -924,6 +1076,25 @@ class TestStatsBombGoalkeeperEvent:
         assert sweeper_claim.get_qualifier_value(GoalkeeperQualifier) == (
             GoalkeeperActionType.PICK_UP
         )
+
+    def test_under_pressure(self, dataset: EventDataset):
+        """It should add the under pressure qualifier"""
+        under_pressure = dataset.get_event_by_id(
+            "c2a03c46-c936-4f7b-9b26-72d470a892ef"
+        )
+        assert under_pressure.get_qualifier_value(UnderPressureQualifier)
+
+        kick_off = dataset.get_event_by_id(
+            "8022c113-e349-4b0b-b4a7-a3bb662535f8"
+        )
+        assert kick_off.get_qualifier_value(UnderPressureQualifier) is None
+
+        under_pressure_events = [
+            event
+            for event in dataset.events
+            if event.get_qualifier_value(UnderPressureQualifier) is True
+        ]
+        assert len(under_pressure_events) == 455
 
 
 class TestStatsBombSubstitutionEvent:
@@ -997,6 +1168,15 @@ class TestStatsBombFoulCommittedEvent:
         assert foul_without_card.get_qualifier_value(CardQualifier) is None
 
 
+class TestStatsBombPressureEvent:
+    """Tests related to deserializing 17/Pressure events"""
+
+    def test_deserialize_all(self, dataset: EventDataset):
+        """It should deserialize all pressure events"""
+        events = dataset.find_all("pressure")
+        assert len(events) == 203
+
+
 class TestStatsBombPlayerOffEvent:
     """Tests related to deserializing 19/Player Off events"""
 
@@ -1018,10 +1198,21 @@ class TestStatsBombPlayerOnEvent:
 class TestStatsBombRecoveryEvent:
     """Tests related to deserializing 23/Recovery events"""
 
-    def test_deserialize_all(self, dataset: EventDataset):
-        """It should deserialize all ball recovery events"""
+    def test_deserialize_successful(self, dataset: EventDataset):
+        """It should deserialize all successful ball recovery events"""
         events = dataset.find_all("recovery")
-        assert len(events) == 97
+        assert len(events) == 93
+
+    def test_deserialize_failed(self, dataset: EventDataset):
+        """It should deserialize all failed ball recovery events as loose ball duels"""
+        failed_recovery = dataset.get_event_by_id(
+            "0df4c1d6-1c4a-407b-876d-d9ac80fd7eee"
+        )
+        assert failed_recovery.event_type == EventType.DUEL
+        assert failed_recovery.get_qualifier_values(DuelQualifier) == [
+            DuelType.LOOSE_BALL,
+        ]
+        assert failed_recovery.result == DuelResult.LOST
 
 
 class TestStatsBombTacticalShiftEvent:
@@ -1038,3 +1229,36 @@ class TestStatsBombTacticalShiftEvent:
             "983cdd00-6f7f-4d62-bfc2-74e4e5b0137f"
         )
         assert formation_change.formation_type == FormationType("4-3-3")
+
+    def test_player_position(self, base_dir):
+        dataset = statsbomb.load(
+            lineup_data=base_dir / "files/statsbomb_lineup.json",
+            event_data=base_dir / "files/statsbomb_event.json",
+        )
+
+        home_team, away_team = dataset.metadata.teams
+        period1, period2 = dataset.metadata.periods
+
+        player = home_team.get_player_by_id(6379)
+        assert player.positions.ranges() == [
+            (
+                period1.start_time,
+                period2.start_time,
+                PositionType.RightMidfield,
+            ),
+            (
+                period2.start_time,
+                period2.end_time,
+                PositionType.RightBack,
+            ),
+        ]
+
+        # This player gets a new position 30 sec after he gets on the pitch, these two positions must be merged
+        player = away_team.get_player_by_id(6935)
+        assert player.positions.ranges() == [
+            (
+                period2.start_time + timedelta(seconds=1362.254),
+                period2.end_time,
+                PositionType.LeftMidfield,
+            )
+        ]

@@ -1,27 +1,26 @@
-import json
+from datetime import timedelta
 import logging
-from typing import IO, Any, Dict, List, NamedTuple, Optional, Union
-
-from lxml import objectify
+from typing import IO, NamedTuple, Optional, Union
+import warnings
 
 from kloppy.domain import (
     AttackingDirection,
     BallState,
     DatasetFlag,
-    Frame,
-    Ground,
     Metadata,
     Orientation,
-    Period,
     Player,
     PlayerData,
     Point,
     Point3D,
+    PositionType,
     Provider,
-    Team,
     TrackingDataset,
     attacking_direction_from_frame,
 )
+from kloppy.domain.services.frame_factory import create_frame
+from kloppy.exceptions import DeserializationError
+from kloppy.infra.serializers.event.statsperform.parsers import get_parser
 from kloppy.utils import performance_logging
 
 from .deserializer import TrackingDataDeserializer
@@ -32,11 +31,14 @@ logger = logging.getLogger(__name__)
 class StatsPerformInputs(NamedTuple):
     meta_data: IO[bytes]
     raw_data: IO[bytes]
+    pitch_length: Optional[float] = None
+    pitch_width: Optional[float] = None
 
 
 class StatsPerformDeserializer(TrackingDataDeserializer[StatsPerformInputs]):
     def __init__(
         self,
+        provider: Provider,
         limit: Optional[int] = None,
         sample_rate: Optional[float] = None,
         coordinate_system: Optional[Union[str, Provider]] = None,
@@ -44,37 +46,15 @@ class StatsPerformDeserializer(TrackingDataDeserializer[StatsPerformInputs]):
     ):
         super().__init__(limit, sample_rate, coordinate_system)
         self.only_alive = only_alive
+        self._provider = provider
 
     @property
     def provider(self) -> Provider:
-        return Provider.STATSPERFORM
-
-    @classmethod
-    def __get_periods(cls, tracking):
-        """Gets the Periods contained in the tracking data."""
-        period_data = {}
-        for line in tracking:
-            time_info = line.split(";")[1].split(",")
-            period_id = int(time_info[1])
-            frame_id = int(time_info[0])
-            if period_id not in period_data:
-                period_data[period_id] = set()
-            period_data[period_id].add(frame_id)
-
-        periods = {
-            period_id: Period(
-                id=period_id,
-                start_timestamp=min(frame_ids),
-                end_timestamp=max(frame_ids),
-            )
-            for period_id, frame_ids in period_data.items()
-        }
-
-        return periods
+        return self._provider
 
     @classmethod
     def __get_frame_rate(cls, tracking):
-        """gets the frame rate of the tracking data"""
+        """Infer the frame rate of the tracking data."""
 
         frame_numbers = [
             int(line.split(";")[1].split(",")[0]) for line in tracking[1:]
@@ -96,11 +76,12 @@ class StatsPerformDeserializer(TrackingDataDeserializer[StatsPerformInputs]):
         frame_info = components[0].split(";")
 
         frame_id = int(frame_info[0])
-        frame_timestamp = int(frame_info[1].split(",")[0]) / 1000
+        frame_timestamp = timedelta(
+            seconds=int(frame_info[1].split(",")[0]) / 1000
+        )
         match_status = int(frame_info[1].split(",")[2])
 
         ball_state = BallState.ALIVE if match_status == 0 else BallState.DEAD
-        ball_owning_team = None
 
         if len(components) > 2:
             ball_data = components[2].split(";")[0].split(",")
@@ -110,180 +91,79 @@ class StatsPerformDeserializer(TrackingDataDeserializer[StatsPerformInputs]):
             ball_coordinates = None
 
         players_data = {}
-        player_info = components[1].split(";")[:-1]
-        for player_data in player_info:
-            player_data = player_data.split(",")
 
-            team_side_id = int(player_data[0])
-            player_id = player_data[1]
-            jersey_no = int(player_data[2])
-            x = float(player_data[3])
-            y = float(player_data[4])
+        if components[1] != ";":  # Check if there are any players in the frame
+            player_info = components[1].split(";")[:-1]
+            for player_data in player_info:
+                player_data = player_data.split(",")
 
-            # Goalkeepers have id 3 and 4
-            if team_side_id > 2:
-                team_side_id = team_side_id - 3
-            team = teams_list[team_side_id]
-            player = team.get_player_by_id(player_id)
+                raw_team_side_id = int(player_data[0])
+                player_id = player_data[1]
+                jersey_no = int(player_data[2])
+                x = float(player_data[3])
+                y = float(player_data[4])
 
-            if not player:
-                player = Player(
-                    player_id=player_id,
-                    team=team,
-                    jersey_no=jersey_no,
-                )
-                team.players.append(player)
+                # Field players have id 0, 1
+                if raw_team_side_id in [0, 1]:
+                    team_side_id = raw_team_side_id
+                # Goalkeepers have id 3 and 4
+                elif raw_team_side_id in [3, 4]:
+                    team_side_id = raw_team_side_id - 3
+                # Referees have id 2
+                elif raw_team_side_id == 2:
+                    continue
+                else:
+                    raise DeserializationError(
+                        f"Unexpected team side id {raw_team_side_id}"
+                    )
+                team = teams_list[team_side_id]
+                player = team.get_player_by_id(player_id)
 
-            players_data[player] = PlayerData(coordinates=Point(x, y))
+                if not player:
+                    player = Player(
+                        player_id=player_id,
+                        team=team,
+                        jersey_no=jersey_no,
+                        starting_position=PositionType.Unknown,
+                    )
+                    team.players.append(player)
 
-        return Frame(
+                players_data[player] = PlayerData(coordinates=Point(x, y))
+
+        frame = create_frame(
             frame_id=frame_id,
             timestamp=frame_timestamp,
             ball_coordinates=ball_coordinates,
             ball_state=ball_state,
-            ball_owning_team=ball_owning_team,
+            ball_owning_team=None,
             players_data=players_data,
             period=period,
             other_data={},
         )
 
-    @staticmethod
-    def __parse_teams_from_xml(match: Any) -> List[Dict[str, Any]]:
-        parsed_teams = []
-        match_info = match.matchInfo
-        teams = match_info.contestants.iterchildren(tag="contestant")
-        for team in teams:
-            team_attributes = team.attrib
-            team_id = team_attributes["id"]
-            parsed_teams.append(
-                {
-                    "team_id": team_id,
-                    "name": team_attributes["name"],
-                    "ground": team_attributes["position"],
-                }
-            )
-        return parsed_teams
-
-    @staticmethod
-    def __parse_players_from_xml(match: Any) -> List[Dict[str, Any]]:
-        parsed_players = []
-        live_data = match.liveData
-        line_ups = live_data.iterchildren(tag="lineUp")
-        for line_up in line_ups:
-            team_id = line_up.get("contestantId")
-            players = line_up.iterchildren(tag="player")
-            for player in players:
-                player_attributes = player.attrib
-                player_id = player_attributes["playerId"]
-                parsed_players.append(
-                    {
-                        "player_id": player_id,
-                        "team_id": team_id,
-                        "jersey_no": int(player_attributes["shirtNumber"]),
-                        "name": player_attributes["matchName"],
-                        "first_name": player_attributes["shortFirstName"],
-                        "last_name": player_attributes["shortLastName"],
-                        "starting": player_attributes["position"]
-                        != "Substitute",
-                        "position": player_attributes["position"],
-                    }
-                )
-        return parsed_players
-
-    @staticmethod
-    def __parse_teams_from_json(match: Dict[str, Any]) -> List[Dict[str, Any]]:
-        parsed_teams = []
-        match_info = match["matchInfo"]
-        teams = match_info["contestant"]
-        for team in teams:
-            team_id = team["id"]
-            parsed_teams.append(
-                {
-                    "team_id": team_id,
-                    "name": team["name"],
-                    "ground": team["position"],
-                }
-            )
-        return parsed_teams
-
-    @staticmethod
-    def __parse_players_from_json(
-        match: Dict[str, Any]
-    ) -> List[Dict[str, Any]]:
-        parsed_players = []
-        live_data = match["liveData"]
-        line_ups = live_data["lineUp"]
-        for line_up in line_ups:
-            team_id = line_up["contestantId"]
-            players = line_up["player"]
-            for player in players:
-                player_id = player["playerId"]
-                parsed_players.append(
-                    {
-                        "player_id": player_id,
-                        "team_id": team_id,
-                        "jersey_no": player["shirtNumber"],
-                        "name": player["matchName"],
-                        "first_name": player["shortFirstName"],
-                        "last_name": player["shortLastName"],
-                        "starting": player["position"] != "Substitute",
-                        "position": player["position"],
-                    }
-                )
-        return parsed_players
+        return frame
 
     def deserialize(self, inputs: StatsPerformInputs) -> TrackingDataset:
-        tracking_data = inputs.raw_data.read().decode("ascii").splitlines()
-        meta_data = inputs.meta_data.read()
-
         with performance_logging("Loading meta data", logger=logger):
-            if meta_data.decode("utf-8")[0] == "<":
-                match = objectify.fromstring(meta_data)
-                parsed_teams = self.__parse_teams_from_xml(match)
-                parsed_players = self.__parse_players_from_xml(match)
-            else:
-                match = json.loads(meta_data)
-                parsed_teams = self.__parse_teams_from_json(match)
-                parsed_players = self.__parse_players_from_json(match)
+            meta_data_parser = get_parser(inputs.meta_data, "MA1")
 
-            teams = {}
-            for parsed_team in parsed_teams:
-                team_id = parsed_team["team_id"]
-                teams[team_id] = Team(
-                    team_id=team_id,
-                    name=parsed_team["name"],
-                    ground=Ground.HOME
-                    if parsed_team["ground"] == "home"
-                    else Ground.AWAY,
-                )
-
-            for parsed_player in parsed_players:
-                player_id = parsed_player["player_id"]
-                team_id = parsed_player["team_id"]
-                team = teams[team_id]
-                player = Player(
-                    player_id=player_id,
-                    team=team,
-                    jersey_no=parsed_player["jersey_no"],
-                    name=parsed_player["name"],
-                    first_name=parsed_player["first_name"],
-                    last_name=parsed_player["last_name"],
-                    starting=parsed_player["starting"],
-                    position=parsed_player["position"],
-                )
-                team.players.append(player)
-            teams_list = list(teams.values())
+            periods = {
+                period.id: period
+                for period in meta_data_parser.extract_periods()
+            }
+            teams_list = list(meta_data_parser.extract_lineups())
+            score = meta_data_parser.extract_score()
+            date = meta_data_parser.extract_date()
+            game_week = meta_data_parser.extract_game_week()
+            game_id = meta_data_parser.extract_game_id()
 
         with performance_logging("Loading tracking data", logger=logger):
+            tracking_data = inputs.raw_data.read().decode("ascii").splitlines()
             frame_rate = self.__get_frame_rate(tracking_data)
-            pitch_size_length = 100
-            pitch_size_width = 100
-
-            periods = self.__get_periods(tracking_data)
 
             transformer = self.get_transformer(
-                length=pitch_size_length,
-                width=pitch_size_width,
+                pitch_length=inputs.pitch_length,
+                pitch_width=inputs.pitch_width,
             )
 
             def _iter():
@@ -292,49 +172,60 @@ class StatsPerformDeserializer(TrackingDataDeserializer[StatsPerformInputs]):
 
                 for line_ in tracking_data:
                     splits = line_.split(";")[1].split(",")
-                    frame_id = int(splits[0])
                     period_id = int(splits[1])
                     period_ = periods[period_id]
-                    if period_.contains(frame_id / frame_rate):
-                        if n % sample == 0:
-                            yield period_, line_
-                        n += 1
+                    if n % sample == 0:
+                        yield period_, line_
+                    n += 1
 
             frames = []
-            for n, frame_data in enumerate(_iter(), start=1):
+            n_frames = 0
+            for frame_data in _iter():
                 period = frame_data[0]
                 frame = self._frame_from_framedata(
                     teams_list, period, frame_data
                 )
                 frame = transformer.transform_frame(frame)
+                if not frame.players_data or (
+                    self.only_alive and frame.ball_state == BallState.DEAD
+                ):
+                    continue
                 frames.append(frame)
 
-                if not period.attacking_direction_set:
-                    period.set_attacking_direction(
-                        attacking_direction=attacking_direction_from_frame(
-                            frame
-                        )
-                    )
+                n_frames += 1
 
-                if self.limit and n >= self.limit:
+                if self.limit and n_frames >= self.limit:
                     break
 
-        orientation = (
-            Orientation.FIXED_HOME_AWAY
-            if periods[1].attacking_direction == AttackingDirection.HOME_AWAY
-            else Orientation.FIXED_AWAY_HOME
-        )
+        try:
+            first_frame = next(
+                frame for frame in frames if frame.period.id == 1
+            )
+            orientation = (
+                Orientation.HOME_AWAY
+                if attacking_direction_from_frame(first_frame)
+                == AttackingDirection.LTR
+                else Orientation.AWAY_HOME
+            )
+        except StopIteration:
+            warnings.warn(
+                "Could not determine orientation of dataset, defaulting to NOT_SET"
+            )
+            orientation = Orientation.NOT_SET
 
         meta_data = Metadata(
             teams=teams_list,
-            periods=periods,
+            periods=list(periods.values()),
             pitch_dimensions=transformer.get_to_coordinate_system().pitch_dimensions,
-            score=None,
+            score=score,
             frame_rate=frame_rate,
             orientation=orientation,
             provider=Provider.STATSPERFORM,
-            flags=DatasetFlag.BALL_OWNING_TEAM | DatasetFlag.BALL_STATE,
+            flags=DatasetFlag.BALL_STATE,
             coordinate_system=transformer.get_to_coordinate_system(),
+            date=date,
+            game_week=game_week,
+            game_id=game_id,
         )
 
         return TrackingDataset(

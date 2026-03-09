@@ -1,29 +1,21 @@
+from datetime import timedelta
 import re
 
-import pytest
-from pandas import DataFrame
 from lxml import objectify
+from pandas import DataFrame
+import pytest
 
-from kloppy.domain import (
-    Orientation,
-    Point,
-    Point3D,
-    Provider,
-)
-from kloppy.infra.serializers.tracking.metrica_epts.metadata import (
-    load_metadata,
-)
+from kloppy import metrica
+from kloppy.domain import Orientation, Point, Provider, Score
 from kloppy.infra.serializers.tracking.metrica_epts.metadata import (
     _load_provider,
+    load_metadata,
 )
 from kloppy.infra.serializers.tracking.metrica_epts.reader import (
     build_regex,
     read_raw_data,
 )
 from kloppy.utils import performance_logging
-
-
-from kloppy import metrica
 
 
 class TestMetricaEPTSTracking:
@@ -72,25 +64,29 @@ class TestMetricaEPTSTracking:
                 assert list(iterator)
 
     def test_read_to_pandas(self, base_dir):
-        with open(
-            base_dir / "files/epts_metrica_metadata.xml", "rb"
-        ) as metadata_fp, open(
-            base_dir / "files/epts_metrica_tracking.txt", "rb"
-        ) as raw_data:
+        with (
+            open(
+                base_dir / "files/epts_metrica_metadata.xml", "rb"
+            ) as metadata_fp,
+            open(
+                base_dir / "files/epts_metrica_tracking.txt", "rb"
+            ) as raw_data,
+        ):
             metadata = load_metadata(metadata_fp)
-            records = read_raw_data(
-                raw_data, metadata, sensor_ids=["position"]
-            )
+            records = read_raw_data(raw_data, metadata, sensor_ids=["position"])
             data_frame = DataFrame.from_records(records)
 
         assert "player_Track_1_x" in data_frame.columns
 
     def test_skip_sensors(self, base_dir):
-        with open(
-            base_dir / "files/epts_metrica_metadata.xml", "rb"
-        ) as metadata_fp, open(
-            base_dir / "files/epts_metrica_tracking.txt", "rb"
-        ) as raw_data:
+        with (
+            open(
+                base_dir / "files/epts_metrica_metadata.xml", "rb"
+            ) as metadata_fp,
+            open(
+                base_dir / "files/epts_metrica_tracking.txt", "rb"
+            ) as raw_data,
+        ):
             metadata = load_metadata(metadata_fp)
             records = read_raw_data(raw_data, metadata, sensor_ids=["speed"])
             data_frame = DataFrame.from_records(records)
@@ -106,6 +102,24 @@ class TestMetricaEPTSTracking:
     def raw_data(self, base_dir) -> str:
         return base_dir / "files/epts_metrica_tracking.txt"
 
+    def test_correct_deserialization_limit_sample(
+        self, meta_data: str, raw_data: str
+    ):
+        dataset = metrica.load_tracking_epts(
+            meta_data=meta_data,
+            raw_data=raw_data,
+            limit=100,
+        )
+        assert len(dataset.records) == 100
+
+        dataset = metrica.load_tracking_epts(
+            meta_data=meta_data,
+            raw_data=raw_data,
+            limit=50,
+            sample_rate=(1 / 2),
+        )
+        assert len(dataset.records) == 50
+
     def test_correct_deserialization(self, meta_data: str, raw_data: str):
         dataset = metrica.load_tracking_epts(
             meta_data=meta_data, raw_data=raw_data
@@ -115,15 +129,37 @@ class TestMetricaEPTSTracking:
 
         assert len(dataset.records) == 100
         assert len(dataset.metadata.periods) == 2
-        assert dataset.metadata.orientation is Orientation.HOME_TEAM
+        assert dataset.metadata.periods[0].id == 1
+        assert dataset.metadata.periods[0].start_timestamp == timedelta(
+            seconds=18
+        )
+        assert dataset.metadata.periods[0].end_timestamp == timedelta(
+            seconds=19.96
+        )
+        assert dataset.metadata.periods[1].id == 2
+        assert dataset.metadata.periods[1].start_timestamp == timedelta(
+            seconds=26
+        )
+        assert dataset.metadata.periods[1].end_timestamp == timedelta(
+            seconds=27.96
+        )
+        assert dataset.metadata.orientation is Orientation.HOME_AWAY
+
+        assert dataset.records[0].frame_id == 450
+        assert dataset.records[0].timestamp == timedelta(
+            seconds=0
+        )  # kickoff first half
+        assert dataset.records[50].frame_id == 650
+        assert dataset.records[50].timestamp == timedelta(
+            seconds=0
+        )  # kickoff second half
 
         assert dataset.records[0].players_data[
             first_player
         ].coordinates == Point(x=0.30602, y=0.97029)
 
-        assert dataset.records[0].ball_coordinates == Point3D(
-            x=0.52867, y=0.7069, z=None
-        )
+        assert dataset.records[0].ball_coordinates.x == pytest.approx(0.52867)
+        assert dataset.records[0].ball_coordinates.y == pytest.approx(0.7069)
 
     def test_other_data_deserialization(self, meta_data: str, raw_data: str):
         dataset = metrica.load_tracking_epts(
@@ -140,11 +176,15 @@ class TestMetricaEPTSTracking:
     def test_read_with_sensor_unused_in_players_and_frame_count_name_modified(
         self, base_dir
     ):
-        with open(
-            base_dir / "files/epts_metrica_metadata_unused_sensor.xml", "rb"
-        ) as metadata_fp, open(
-            base_dir / "files/epts_metrica_tracking.txt", "rb"
-        ) as raw_data:
+        with (
+            open(
+                base_dir / "files/epts_metrica_metadata_unused_sensor.xml",
+                "rb",
+            ) as metadata_fp,
+            open(
+                base_dir / "files/epts_metrica_tracking.txt", "rb"
+            ) as raw_data,
+        ):
             dataset = metrica.load_tracking_epts(
                 meta_data=metadata_fp, raw_data=raw_data
             )
@@ -159,12 +199,15 @@ class TestMetricaEPTSTracking:
         assert len(dataset.metadata.sensors) == 4
 
     def test_read_empty_player_values(self, base_dir):
-        with open(
-            base_dir / "files/epts_metrica_metadata.xml", "rb"
-        ) as metadata_fp, open(
-            base_dir / "files/epts_metrica_tracking_with_empty_values.txt",
-            "rb",
-        ) as raw_data:
+        with (
+            open(
+                base_dir / "files/epts_metrica_metadata.xml", "rb"
+            ) as metadata_fp,
+            open(
+                base_dir / "files/epts_metrica_tracking_with_empty_values.txt",
+                "rb",
+            ) as raw_data,
+        ):
             dataset = metrica.load_tracking_epts(
                 meta_data=metadata_fp, raw_data=raw_data
             )
@@ -188,3 +231,4 @@ class TestMetricaEPTSTracking:
             base_dir / "files/epts_metrica_metadata_without_score.xml", "rb"
         ) as metadata_fp:
             metadata = load_metadata(metadata_fp)
+            assert metadata.score == Score(home=0, away=0)

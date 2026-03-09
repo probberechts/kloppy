@@ -1,11 +1,15 @@
-import os
+from datetime import timedelta
+from io import BytesIO
 
 from pandas import DataFrame
 from pandas._testing import assert_frame_equal
 
-from kloppy.domain import Period
 from kloppy import sportscode
-from kloppy.infra.serializers.code.sportscode import SportsCodeSerializer
+from kloppy.domain import Period
+from kloppy.infra.serializers.code.sportscode import (
+    SportsCodeOutputs,
+    SportsCodeSerializer,
+)
 
 
 class TestXMLCodeTracking:
@@ -14,7 +18,9 @@ class TestXMLCodeTracking:
 
         assert len(dataset.metadata.periods) == 1
 
-        assert dataset.metadata.periods[0].start_timestamp == 0
+        assert dataset.metadata.periods[0].start_timestamp == timedelta(
+            seconds=0
+        )
         assert (
             dataset.metadata.periods[0].end_timestamp
             == dataset.codes[-1].end_timestamp
@@ -23,22 +29,30 @@ class TestXMLCodeTracking:
         assert len(dataset.codes) == 3
         assert dataset.codes[0].code_id == "P1"
         assert dataset.codes[0].code == "PASS"
-        assert dataset.codes[0].timestamp == 3.6
-        assert dataset.codes[0].end_timestamp == 9.7
+        assert dataset.codes[0].timestamp == timedelta(seconds=3.6)
+        assert dataset.codes[0].end_timestamp == timedelta(seconds=9.7)
         assert dataset.codes[0].labels == {
             "Team": "Henkie",
             "Packing.Value": 1,
             "Receiver": "Klaas Nøme",
         }
 
-        dataframe = dataset.to_pandas()
+        dataframe = dataset.to_df(engine="pandas")
 
         expected_data_frame = DataFrame.from_dict(
             {
                 "code_id": ["P1", "P2", "P3"],
                 "period_id": [1, 1, 1],
-                "timestamp": [3.6, 68.3, 103.6],
-                "end_timestamp": [9.7, 74.5, 109.6],
+                "timestamp": [
+                    timedelta(seconds=3.6),
+                    timedelta(seconds=68.3),
+                    timedelta(seconds=103.6),
+                ],
+                "end_timestamp": [
+                    timedelta(seconds=9.7),
+                    timedelta(seconds=74.5),
+                    timedelta(seconds=109.6),
+                ],
                 "code": ["PASS", "PASS", "SHOT"],
                 "Team": ["Henkie", "Henkie", "Henkie"],
                 "Packing.Value": [1, 3, None],
@@ -56,13 +70,24 @@ class TestXMLCodeTracking:
 
         # Make sure that data in Period 2 get the timestamp corrected
         dataset.metadata.periods = [
-            Period(id=1, start_timestamp=0, end_timestamp=45 * 60),
-            Period(id=2, start_timestamp=45 * 60 + 10, end_timestamp=90 * 60),
+            Period(
+                id=1,
+                start_timestamp=timedelta(seconds=0),
+                end_timestamp=timedelta(minutes=45),
+            ),
+            Period(
+                id=2,
+                start_timestamp=timedelta(minutes=45, seconds=10),
+                end_timestamp=timedelta(minutes=90),
+            ),
         ]
         dataset.codes[1].period = dataset.metadata.periods[1]
 
         serializer = SportsCodeSerializer()
-        output = serializer.serialize(dataset)
+        with BytesIO() as buffer:
+            serializer.serialize(dataset, SportsCodeOutputs(data=buffer))
+            buffer.seek(0)
+            output = buffer.read()
 
         expected_output = """<?xml version='1.0' encoding='utf-8'?>
 <file>

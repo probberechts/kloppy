@@ -1,111 +1,564 @@
+"""I/O utilities for reading raw data."""
+
+import bz2
+from collections.abc import Generator, Iterable, Iterator
 import contextlib
-import logging
-import os
-import urllib.parse
+from contextlib import AbstractContextManager
 from dataclasses import dataclass, replace
-from pathlib import PurePath
-from typing import Union, IO, BinaryIO, Tuple
+import gzip
+from io import BufferedWriter, BytesIO, TextIOWrapper
+import logging
+import lzma
+import os
+import re
+from typing import IO, Any, BinaryIO, Callable, Optional, Union, cast
 
-from io import BytesIO
-
-from kloppy.config import get_config
-from kloppy.exceptions import InputNotFoundError
+from kloppy.exceptions import AdapterError, InputNotFoundError
 from kloppy.infra.io.adapters import get_adapter
-
+from kloppy.infra.io.buffered_stream import BufferedStream
 
 logger = logging.getLogger(__name__)
 
-_open = open
+DEFAULT_GZIP_COMPRESSION = 1
+DEFAULT_BZ2_COMPRESSION = 9
+DEFAULT_XZ_COMPRESSION = 6
+
+
+FilePath = Union[str, bytes, os.PathLike]
+FileOrPath = Union[FilePath, IO]
 
 
 @dataclass(frozen=True)
 class Source:
-    data: "FileLike"
+    """A wrapper around a file-like object to enable optional inputs.
+
+    Args:
+        data (FileLike): The file-like object.
+        optional (bool): Whether the file is optional. Defaults to False.
+        skip_if_missing (bool): Whether to skip the file if it is missing. Defaults to False.
+
+    Example:
+
+        >>> open_as_file(Source.create("example.csv", optional=True))
+    """
+
+    data: Optional[FileOrPath]
     optional: bool = False
     skip_if_missing: bool = False
 
     @classmethod
-    def create(cls, input_: "FileLike", **kwargs):
+    def create(cls, input_: Optional[FileOrPath], **kwargs):
         if isinstance(input_, Source):
             return replace(input_, **kwargs)
         return Source(data=input_, **kwargs)
 
 
-FileLike = Union[str, PurePath, bytes, IO[bytes], Source]
+FileLike = Union[FileOrPath, Source]
 
 
-def get_local_cache_stream(url: str, cache_dir: str) -> Tuple[BinaryIO, bool]:
-    if not os.path.exists(cache_dir):
-        os.makedirs(cache_dir)
+def _file_or_path_to_binary_stream(
+    file_or_path: FileOrPath, binary_mode: str
+) -> tuple[BinaryIO, bool]:
+    """
+    Converts a file path or a file-like object to a binary stream.
 
-    filename = urllib.parse.quote_plus(url)
-    local_filename = f"{cache_dir}/{filename}"
+    Args:
+        file_or_path: The file path or file-like object to convert.
+        binary_mode: The binary mode to open the file in. Must be one of 'rb', 'wb', or 'ab'.
 
-    # Open the file in append+read mode
-    # this makes sure:
-    # 1. The file is created when it does not exist
-    # 2. The file is not truncated when it does exist
-    # 3. The file can be read
-    return _open(local_filename, "a+b"), (
-        os.path.exists(local_filename)
-        and os.path.getsize(local_filename) > 0
-        and local_filename
+    Returns:
+        A tuple containing the binary stream and a boolean indicating whether
+        a new file was opened (True) or an existing file-like object was used (False).
+    """
+    assert binary_mode in ("rb", "wb", "ab")
+
+    if isinstance(file_or_path, (str, bytes)) or hasattr(
+        file_or_path, "__fspath__"
+    ):
+        # If file_or_path is a path-like object, open it and return the binary stream
+        return open(os.fspath(file_or_path), binary_mode), True  # type: ignore
+
+    if isinstance(file_or_path, TextIOWrapper):
+        # If file_or_path is a TextIOWrapper, return its underlying binary buffer
+        return file_or_path.buffer, False
+
+    if hasattr(file_or_path, "readinto") or hasattr(file_or_path, "write"):
+        # If file_or_path is a file-like object, return it as is
+        return file_or_path, False  # type: ignore
+
+    raise TypeError(
+        f"Unsupported type for {file_or_path}, {file_or_path.__class__.__name__}."
+    )
+
+
+def _detect_format_from_content(file_or_path: FileOrPath) -> Optional[str]:
+    """
+    Attempts to detect file format from the content by reading the first
+    6 bytes. Returns None if no format could be detected.
+    """
+    fileobj, closefd = _file_or_path_to_binary_stream(file_or_path, "rb")
+    try:
+        if not fileobj.readable():
+            return None
+        if hasattr(fileobj, "peek"):
+            bs = fileobj.peek(6)
+        elif hasattr(fileobj, "seekable") and fileobj.seekable():
+            current_pos = fileobj.tell()
+            bs = fileobj.read(6)
+            fileobj.seek(current_pos)
+        else:
+            return None
+
+        if bs[:2] == b"\x1f\x8b":
+            # https://tools.ietf.org/html/rfc1952#page-6
+            return "gz"
+        elif bs[:3] == b"\x42\x5a\x68":
+            # https://en.wikipedia.org/wiki/List_of_file_signatures
+            return "bz2"
+        elif bs[:6] == b"\xfd\x37\x7a\x58\x5a\x00":
+            # https://tukaani.org/xz/xz-file-format.txt
+            return "xz"
+        return None
+    finally:
+        if closefd:
+            fileobj.close()
+
+
+def _detect_format_from_extension(filename: FilePath) -> Optional[str]:
+    """
+    Attempt to detect file format from the filename extension.
+    Return None if no format could be detected.
+    """
+    extensions = ("bz2", "xz", "gz")
+
+    if isinstance(filename, bytes):
+        for ext in extensions:
+            if filename.endswith(b"." + ext.encode()):
+                return ext
+
+    if isinstance(filename, str):
+        for ext in extensions:
+            if filename.endswith("." + ext):
+                return ext
+
+    if hasattr(filename, "name"):
+        return _detect_format_from_extension(filename.name)
+
+    return None
+
+
+def _filepath_from_path_or_filelike(file_or_path: FileOrPath) -> str:
+    try:
+        return os.fspath(file_or_path)  # type: ignore
+    except TypeError:
+        pass
+
+    if hasattr(file_or_path, "name"):
+        name = file_or_path.name
+        if isinstance(name, str):
+            return name
+        elif isinstance(name, bytes):
+            return name.decode()
+
+    return ""
+
+
+def _open(
+    filename: FileOrPath,
+    mode: str = "rb",
+    compresslevel: Optional[int] = None,
+    format: Optional[str] = None,  # noqa: A002
+) -> BinaryIO:
+    """
+        A replacement for the "open" function that can also read and write
+        compressed files transparently. The supported compression formats are gzip,
+        bzip2 and xz. Filename can be a string, a Path or a file object.
+
+        When writing, the file format is chosen based on the file name extension:
+        - .gz uses gzip compression
+        - .bz2 uses bzip2 compression
+    - .xz uses xz/lzma compression
+        - otherwise, no compression is used
+
+        When reading, if a file name extension is available, the format is detected
+        using it, but if not, the format is detected from the contents.
+
+        mode can be: 'rb', 'ab', or 'wb'.
+
+        compresslevel is the compression level for writing to gzip, and xz.
+        This parameter is ignored for the other compression formats.
+        If set to None, a default depending on the format is used:
+        gzip: 6, xz: 6.
+
+        format overrides the autodetection of input and output formats. This can be
+        useful when compressed output needs to be written to a file without an
+        extension. Possible values are "gz", "xz", "bz2" and "raw". In case of
+        "raw", no compression is used.
+    """
+    if mode not in ("rb", "wb", "ab"):
+        raise ValueError(f"Mode '{mode}' not supported")
+    filepath = _filepath_from_path_or_filelike(filename)
+
+    if format not in (None, "gz", "xz", "bz2", "raw"):
+        raise ValueError(
+            f"Format not supported: {format}. Choose one of: 'gz', 'xz', 'bz2'"
+        )
+
+    if format == "raw":
+        detected_format = None
+    else:
+        detected_format = format or _detect_format_from_extension(filepath)
+        if detected_format is None and "r" in mode:
+            detected_format = _detect_format_from_content(filename)
+
+    if detected_format == "gz":
+        opened_file = _open_gz(filename, mode, compresslevel)
+    elif detected_format == "xz":
+        opened_file = _open_xz(filename, mode, compresslevel)
+    elif detected_format == "bz2":
+        opened_file = _open_bz2(filename, mode, compresslevel)
+    else:
+        opened_file, _ = _file_or_path_to_binary_stream(filename, mode)
+
+    return opened_file
+
+
+def _open_bz2(
+    filename: FileOrPath,
+    mode: str,
+    compresslevel: Optional[int] = None,
+) -> BinaryIO:
+    assert mode in ("rb", "ab", "wb")
+    if compresslevel is None:
+        compresslevel = DEFAULT_BZ2_COMPRESSION
+
+    if "r" in mode:
+        return bz2.open(filename, mode)  # type: ignore
+    return BufferedWriter(bz2.open(filename, mode, compresslevel))  # type: ignore
+
+
+def _open_xz(
+    filename: FileOrPath,
+    mode: str,
+    compresslevel: Optional[int] = None,
+) -> BinaryIO:
+    assert mode in ("rb", "ab", "wb")
+    if compresslevel is None:
+        compresslevel = DEFAULT_XZ_COMPRESSION
+
+    if "r" in mode:
+        return lzma.open(filename, mode)  # type: ignore
+    return BufferedWriter(lzma.open(filename, mode, preset=compresslevel))  # type: ignore
+
+
+def _open_gz(
+    filename: FileOrPath,
+    mode: str,
+    compresslevel: Optional[int] = None,
+) -> BinaryIO:
+    assert mode in ("rb", "ab", "wb")
+    if compresslevel is None:
+        compresslevel = DEFAULT_GZIP_COMPRESSION
+
+    if "r" in mode:
+        return gzip.open(filename, mode)  # type: ignore
+    return BufferedWriter(
+        gzip.open(filename, mode, compresslevel=compresslevel)
+    )  # type: ignore
+
+
+def get_file_extension(file_or_path: FileLike) -> str:
+    """Determine the file extension of the given file-like object.
+
+    If the file has compression extensions such as '.gz', '.xz', or '.bz2',
+    they will be stripped before determining the extension.
+
+    Args:
+        file_or_path (FileLike): The file-like object whose extension needs to be determined.
+
+    Returns:
+        str: The file extension, including the dot ('.') if present.
+
+    Raises:
+        Exception: If the extension cannot be determined.
+
+    Example:
+
+        >>> get_file_extension("example.xml.gz")
+        '.xml'
+        >>> get_file_extension(Path("example.txt"))
+        '.txt'
+        >>> get_file_extension(Source(data="example.csv"))
+        '.csv'
+    """
+    if isinstance(file_or_path, (str, bytes)) or hasattr(
+        file_or_path, "__fspath__"
+    ):
+        path = os.fspath(file_or_path)  # type: ignore
+        for ext in [".gz", ".xz", ".bz2"]:
+            if path.endswith(ext):
+                path = path[: -len(ext)]
+        return os.path.splitext(path)[1]
+
+    if isinstance(file_or_path, Source):
+        return get_file_extension(file_or_path.data)
+
+    raise TypeError(
+        f"Could not determine extension for input type: {type(file_or_path)}"
     )
 
 
 @contextlib.contextmanager
-def dummy_context_mgr():
-    yield None
+def _write_context_manager(
+    uri: str, mode: str
+) -> Generator[BinaryIO, None, None]:
+    """
+    Context manager for write operations that buffers writes and flushes to adapter on exit.
+
+    Args:
+        uri: The destination URI
+        mode: Write mode ('wb' or 'ab')
+
+    Yields:
+        A BufferedStream for writing
+    """
+    buffer = BufferedStream()
+    try:
+        yield buffer
+    finally:
+        adapter = get_adapter(uri)
+        if adapter:
+            adapter.write_from_stream(uri, buffer, mode)
+        else:
+            raise AdapterError(f"No adapter found for {uri}")
 
 
-def open_as_file(input_: FileLike) -> IO:
+def open_as_file(
+    input_: FileLike,
+    mode: str = "rb",
+) -> AbstractContextManager[Optional[BinaryIO]]:
+    """Open a byte stream to/from the given input object.
+
+    The following input types are supported:
+        - A string or `pathlib.Path` object representing a local file path.
+        - A string representing a URL. It should start with 'http://' or
+          'https://'.
+        - A string representing a path to a file in a Amazon S3 cloud storage
+          bucket. It should start with 's3://'.
+        - A xml or json string containing the data. The string should contain
+          a '{' or '<' character. Otherwise, it will be treated as a file path.
+        - A bytes object containing the data.
+        - A buffered binary stream that inherits from `io.BufferedIOBase`.
+        - A [Source](`kloppy.io.Source`) object that wraps any of the above
+          input types.
+
+    Args:
+        input_ (FileLike): The input/output object to be opened.
+        mode (str): File mode - 'rb' (read), 'wb' (write), or 'ab' (append).
+            Defaults to 'rb'.
+
+    Returns:
+        BinaryIO: A binary stream to/from the input object.
+
+    Raises:
+        ValueError: If the input is required but not provided, or invalid mode.
+        InputNotFoundError: If the input file is not found and should not be skipped.
+        TypeError: If the input type is not supported.
+        NotImplementedError: If write mode is used with unsupported input types.
+
+    Example:
+
+        >>> # Reading
+        >>> with open_as_file("example.txt") as f:
+        ...     contents = f.read()
+        >>>
+        >>> # Writing
+        >>> with open_as_file("output.txt", mode="wb") as f:
+        ...     f.write(b"Hello, world!")
+
+    Note:
+        To support reading data from other sources, see the
+        [Adapter](`kloppy.io.adapters.Adapter`) class.
+
+        If the given file path or URL ends with '.gz', '.xz', or '.bz2', the
+        file will be automatically compressed/decompressed.
+
+        Write mode limitations:
+            - HTTP/HTTPS URLs: Not supported
+            - Inline strings/bytes: Not supported (invalid output destination)
+    """
+    # 1. Handle Source wrapper logic first
     if isinstance(input_, Source):
-        if input_.data is None and input_.optional:
-            # This saves us some additional code in every vendor specific code
-            return dummy_context_mgr()
+        if input_.data is None:
+            if input_.optional:
+                return contextlib.nullcontext(None)
+            raise ValueError("Input required but not provided.")
 
         try:
-            return open_as_file(input_.data)
+            return open_as_file(input_.data, mode=mode)
         except InputNotFoundError:
             if input_.skip_if_missing:
-                logging.info(f"Input {input_.data} not found. Skipping")
-                return dummy_context_mgr()
+                logger.info(f"Input {input_.data} not found. Skipping")
+                return contextlib.nullcontext(None)
             raise
-    elif isinstance(input_, str) or isinstance(input_, PurePath):
-        if isinstance(input_, PurePath):
-            input_ = str(input_)
-            is_path = True
-        else:
-            is_path = False
 
-        if not is_path and ("{" in input_ or "<" in input_):
-            return BytesIO(input_.encode("utf8"))
-        else:
-            adapter = get_adapter(input_)
-            if adapter:
-                cache_dir = get_config("cache")
-                if cache_dir:
-                    stream, local_cache_file = get_local_cache_stream(
-                        input_, cache_dir
-                    )
-                else:
-                    stream = BytesIO()
-                    local_cache_file = None
+    # 2. Validate input for Write Modes
+    if mode in ("wb", "ab"):
+        if isinstance(input_, str) and ("{" in input_ or "<" in input_):
+            raise TypeError("Cannot write to inline JSON/XML string.")
+        if isinstance(input_, bytes):
+            raise TypeError(
+                "Cannot write to bytes object. Use BytesIO instead."
+            )
 
-                if not local_cache_file:
-                    logger.info(f"Retrieving {input_}")
-                    adapter.read_to_stream(input_, stream)
-                    logger.info("Retrieval complete")
-                else:
-                    logger.info(f"Using local cached file {local_cache_file}")
+    # 3. Handle Inline Data (Read Mode)
+    if mode == "rb":
+        if isinstance(input_, str) and ("{" in input_ or "<" in input_):
+            return contextlib.nullcontext(BytesIO(input_.encode("utf8")))
+        if isinstance(input_, bytes):
+            return contextlib.nullcontext(BytesIO(input_))
+
+    # 4. Handle Adapter-based URIs/Paths
+    # Check if input looks like a path or string URI
+    if isinstance(input_, (str, os.PathLike)):
+        uri = _filepath_from_path_or_filelike(input_)
+        adapter = get_adapter(uri)
+
+        if adapter:
+            if mode == "rb":
+                stream = BufferedStream()
+                adapter.read_to_stream(uri, stream)
                 stream.seek(0)
+                return contextlib.nullcontext(stream)
             else:
-                if not os.path.exists(input_):
-                    raise InputNotFoundError(f"File {input_} does not exist")
+                return _write_context_manager(uri, mode)
 
-                stream = _open(input_, "rb")
-            return stream
-    elif isinstance(input_, bytes):
-        return BytesIO(input_)
+        # check if the uri is a string with adapter prefix
+        elif isinstance(input_, str):
+            prefix_match = re.match(r"^([a-zA-Z0-9+.-]+)://", input_)
+            if prefix_match:
+                raise AdapterError(
+                    f"No adapter found for {prefix_match.group(1)}://"
+                )
+
+        # If no adapter found, fall through to standard _open (local file handling)
+
+    # 5. Handle File Objects or Standard Local Files
+    if (
+        hasattr(input_, "readinto")
+        or hasattr(input_, "write")
+        or isinstance(input_, (str, os.PathLike))
+    ):
+        # --- Validation: Check mode compatibility for existing file objects ---
+        if not isinstance(input_, (str, os.PathLike)):
+            input_mode = getattr(input_, "mode", None)
+            if input_mode and input_mode != mode:
+                raise ValueError(
+                    f"File opened in mode '{input_mode}' but '{mode}' requested"
+                )
+
+        # --- Processing: Open or wrap the input ---
+        # _open handles:
+        # 1. Opening paths
+        # 2. Extracting binary buffers from TextIOWrapper
+        # 3. Detecting compression (gzip, etc) and returning a Decompressor wrapper
+        opened = _open(input_, mode)
+
+        # --- Ownership: Decide if we should close the file on exit ---
+
+        # Case A: We created a new wrapper (e.g. opened a path, or wrapped BytesIO in GzipFile)
+        # We return the object directly so its __exit__ cleans up the wrapper.
+        # Note: We check if `opened` is different from `input_` AND different from `input_.buffer`
+        # (the latter handles the TextIOWrapper case where we don't want to close the wrapper).
+        is_transformed = opened is not input_
+        if hasattr(input_, "buffer"):
+            is_transformed = is_transformed and opened is not input_.buffer
+
+        if is_transformed:
+            # Exception: If the original input was a file object, and _open returned a
+            # compression wrapper (like GzipFile), closing GzipFile usually closes the
+            # underlying file.
+            return cast(AbstractContextManager, opened)
+
+        # Case B: It is the exact same raw stream (e.g. plain BytesIO)
+        # We wrap in nullcontext so we don't close the user's object.
+        return contextlib.nullcontext(opened)
+
+    raise TypeError(f"Unsupported input type: {type(input_)}")
+
+
+def _natural_sort_key(path: str) -> list[Union[int, str]]:
+    # Split string into list of chunks for natural sorting
+    return [
+        int(text) if text.isdigit() else text.lower()
+        for text in re.split(r"(\d+)", path)
+    ]
+
+
+def expand_inputs(
+    inputs: Union[FileLike, Iterable[FileLike]],
+    regex_filter: Optional[str] = None,
+    sort_key: Optional[Callable[[str], Any]] = None,
+) -> Iterator[FileLike]:
+    """
+    Process input data to a list of file-like objects.
+
+    This function resolves the input data to a list of file-like objects
+    that can be opened with [`open_as_file`][kloppy.io.open_as_file].
+    The input data can be any of the types supported by `open_as_file`,
+    including a list of these input types or a directory.
+
+    If the input is a directory, the directory is expanded to a list of files,
+    which are then filtered using a regex pattern and sorted using a custom key.
+
+    If the input is a list of file-like objects, these are assumed to be in the
+    correct order and are returned as is.
+
+    Args:
+        inputs: The input object, a list of input objects, or a directory with input objects to be opened.
+        regex_filter: A regex pattern to filter files (only applies to directories).
+        sort_key: A callable to define sorting logic for files (only applies to directories).
+          If not provided, files are sorted as ["file1.txt", "file2.txt", "file10.txt"].
+
+    Returns:
+        An iterator over the resolved file paths or stream content.
+    """
+
+    def _get_adapter_safe(uri):
+        adapter = get_adapter(uri)
+        if not adapter:
+            raise AdapterError(f"No adapter found for {uri}")
+        return adapter
+
+    # 1. Handle Single String/Path Input
+    if isinstance(inputs, (str, os.PathLike)):
+        uri = _filepath_from_path_or_filelike(inputs)
+        adapter = _get_adapter_safe(uri)
+
+        if adapter.is_directory(uri):
+            # Recursively expand directory contents
+            all_files = adapter.list_directory(uri, recursive=True)
+
+            # Apply Filter
+            if regex_filter:
+                pattern = re.compile(regex_filter)
+                all_files = [f for f in all_files if pattern.search(f)]
+
+            # Apply Sort
+            all_files.sort(key=sort_key or _natural_sort_key)
+
+            yield from all_files
+        elif adapter.is_file(uri):
+            yield uri
+        else:
+            raise InputNotFoundError(f"Invalid path or file: {inputs}")
+
+    # 2. Handle Iterable Input
+    elif isinstance(inputs, Iterable) and not isinstance(inputs, (str, bytes)):
+        for item in inputs:
+            # Recursive call allows mixed lists of directories and files
+            yield from expand_inputs(item, regex_filter, sort_key)
+
+    # 3. Handle Single Object Input (BytesIO, etc)
     else:
-        return input_
+        yield inputs

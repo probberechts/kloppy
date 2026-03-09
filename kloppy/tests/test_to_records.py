@@ -1,10 +1,12 @@
+from datetime import timedelta
 from pathlib import Path
 
 import pytest
-from kloppy import statsbomb
 
+from kloppy import statsbomb
 from kloppy.domain import EventDataset, Point
 from kloppy.domain.services.transformers.attribute import (
+    AngleToGoalTransformer,
     DistanceToGoalTransformer,
     DistanceToOwnGoalTransformer,
 )
@@ -33,8 +35,6 @@ class TestToRecords:
         assert list(records[0].keys()) == [
             "event_id",
             "event_type",
-            "result",
-            "success",
             "period_id",
             "timestamp",
             "end_timestamp",
@@ -44,6 +44,8 @@ class TestToRecords:
             "player_id",
             "coordinates_x",
             "coordinates_y",
+            "result",
+            "success",
         ]
 
     def test_string_columns(self, dataset: EventDataset):
@@ -57,7 +59,7 @@ class TestToRecords:
             "timestamp", "coordinates_x", "coordinates"
         )
         assert records[0] == {
-            "timestamp": 0.098,
+            "timestamp": timedelta(seconds=0.098),
             "coordinates_x": 60.5,
             "coordinates": Point(x=60.5, y=40.5),
         }
@@ -73,12 +75,37 @@ class TestToRecords:
             "coordinates_*",
             DistanceToGoalTransformer(),
             DistanceToOwnGoalTransformer(),
+            AngleToGoalTransformer(),
         )
         assert records[0] == {
-            "timestamp": 0.098,
+            "timestamp": timedelta(seconds=0.098),
             "player_id": "6581",
             "coordinates_x": 60.5,
             "coordinates_y": 40.5,
             "distance_to_goal": 59.50210080324896,
             "distance_to_own_goal": 60.502066080424065,
+            "angle_to_goal": 89.49633196102769,
+        }
+
+    @pytest.mark.parametrize(
+        "coordinate_system", ["statsbomb", "tracab", "opta"]
+    )
+    def test_angle_to_goal_transformer(
+        self, event_data: Path, lineup_data: Path, coordinate_system
+    ):
+        """
+        Make sure calculation of the angle is consistent in different coordinate systems.
+        """
+        dataset = statsbomb.load(
+            lineup_data=lineup_data,
+            event_data=event_data,
+            coordinates=coordinate_system,
+        )
+        records = dataset.filter("pass").to_records(
+            "timestamp",
+            AngleToGoalTransformer(),
+        )
+        assert records[0] == {
+            "timestamp": timedelta(seconds=0.098),
+            "angle_to_goal": 89.49633196102769,
         }

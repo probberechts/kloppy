@@ -1,0 +1,27 @@
+name: Release
+on:
+  workflow_dispatch:
+    inputs:
+      # Latest commit to include with the release.
+      # If omitted, use the latest commit on the main branch.
+      sha:
+        description: Commit SHA
+        type: string
+      # Create the sdist and build the wheels, but do not publish to PyPI/GitHub.
+      dry-run:
+        description: Dry run
+        type: boolean
+        default: false
+jobs:
+  publish:
+    environment: release # needed for PyPI OIDC
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.5.14"
+      - run: uv build
+      - uses: pypa/gh-action-pypi-publish@release/v1

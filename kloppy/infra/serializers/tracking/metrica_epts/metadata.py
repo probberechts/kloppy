@@ -1,31 +1,44 @@
-from typing import IO
-
-from lxml import objectify
+from datetime import timedelta
+from typing import IO, Optional, Union
 import warnings
 
+from lxml import objectify
+
 from kloppy.domain import (
+    AttackingDirection,
+    DatasetFlag,
+    Dimension,
+    Ground,
+    NormalizedPitchDimensions,
+    Orientation,
     Period,
     PitchDimensions,
-    Dimension,
-    Score,
-    Ground,
-    DatasetFlag,
-    AttackingDirection,
-    Orientation,
-    Position,
-    Point,
+    Player,
+    PositionType,
     Provider,
+    Score,
+    Team,
     build_coordinate_system,
 )
 
-from .models import *
+from .models import (
+    DataFormatSpecification,
+    EPTSMetadata,
+    PlayerChannel,
+    Sensor,
+)
+
+position_types_mapping: dict[int, PositionType] = {
+    -1: PositionType.Unknown,
+    0: PositionType.Goalkeeper,
+}
 
 
 def noop(x):
     return x
 
 
-def _load_provider_parameters(parent_elm, value_mapper=None) -> Dict:
+def _load_provider_parameters(parent_elm, value_mapper=None) -> dict:
     if parent_elm is None:
         return {}
 
@@ -41,7 +54,7 @@ def _load_provider_parameters(parent_elm, value_mapper=None) -> Dict:
 
 def _load_periods(
     metadata_elm, team_map: dict, frame_rate: int
-) -> List[Period]:
+) -> tuple[list[Period], AttackingDirection]:
     global_config_elm = metadata_elm.find("GlobalConfig")
     provider_params = _load_provider_parameters(
         global_config_elm.find("ProviderGlobalParameters")
@@ -62,33 +75,26 @@ def _load_periods(
     ]
 
     periods = []
+    start_attacking_direction = AttackingDirection.NOT_SET
 
     for idx, period_name in enumerate(period_names):
         # the attacking direction is only defined for the first period
         # and alternates between periods
-        invert = idx % 2
-        if (
-            provider_teams_params[Ground.HOME].get(
-                "attack_direction_first_half"
-            )
-            == "left_to_right"
-        ):
-            attacking_direction = [
-                AttackingDirection.HOME_AWAY,
-                AttackingDirection.AWAY_HOME,
-            ][invert]
-        elif (
-            provider_teams_params[Ground.HOME].get(
-                "attack_direction_first_half"
-            )
-            == "right_to_left"
-        ):
-            attacking_direction = [
-                AttackingDirection.AWAY_HOME,
-                AttackingDirection.HOME_AWAY,
-            ][invert]
-        else:
-            attacking_direction = AttackingDirection.NOT_SET
+        if idx == 0:
+            if (
+                provider_teams_params[Ground.HOME].get(
+                    "attack_direction_first_half"
+                )
+                == "left_to_right"
+            ):
+                start_attacking_direction = AttackingDirection.LTR
+            elif (
+                provider_teams_params[Ground.HOME].get(
+                    "attack_direction_first_half"
+                )
+                == "right_to_left"
+            ):
+                start_attacking_direction = AttackingDirection.RTL
 
         start_key = f"{period_name}_start"
         end_key = f"{period_name}_end"
@@ -96,59 +102,60 @@ def _load_periods(
             periods.append(
                 Period(
                     id=idx + 1,
-                    start_timestamp=float(provider_params[start_key])
-                    / frame_rate,
-                    end_timestamp=float(provider_params[end_key]) / frame_rate,
-                    attacking_direction=attacking_direction,
+                    start_timestamp=timedelta(
+                        seconds=float(provider_params[start_key]) / frame_rate
+                    ),
+                    end_timestamp=timedelta(
+                        seconds=float(provider_params[end_key]) / frame_rate
+                    ),
                 )
             )
         else:
             # done
             break
 
-    return periods
+    return periods, start_attacking_direction
 
 
-def _load_players(players_elm, team: Team) -> List[Player]:
+def _load_players(players_elm, team: Team) -> list[Player]:
     return [
         Player(
             team=team,
             jersey_no=int(player_elm.find("ShirtNumber")),
             player_id=player_elm.attrib["id"],
             name=str(player_elm.find("Name")),
-            position=_load_position_data(
+            starting_position=_load_position_data(
                 player_elm.find("ProviderPlayerParameters")
             ),
             attributes=_load_provider_parameters(
                 player_elm.find("ProviderPlayerParameters")
             ),
+            starting=True,  # Not sure if this is correct
         )
         for player_elm in players_elm.iterchildren(tag="Player")
         if player_elm.attrib["teamId"] == team.team_id
     ]
 
 
-def _load_position_data(parent_elm) -> Position:
+def _load_position_data(parent_elm) -> PositionType:
     # TODO: _load_provider_parameters is called twice to set position data
     # and then again to set the attributes. Also, data in position should not
     # be duplicated in attributes either.
     player_provider_parameters = _load_provider_parameters(parent_elm)
-    if "position_index" not in player_provider_parameters:
-        return None
 
-    return Position(
-        position_id=player_provider_parameters["position_index"],
-        name=player_provider_parameters["position_type"],
-        coordinates=Point(
-            player_provider_parameters["position_x"],
-            player_provider_parameters["position_y"],
-        ),
-    )
+    if "position_index" not in player_provider_parameters:
+        position_type = PositionType.Unknown
+    else:
+        position_type = position_types_mapping.get(
+            player_provider_parameters["position_index"], PositionType.Unknown
+        )
+
+    return position_type
 
 
 def _load_data_format_specifications(
     data_format_specifications_elm,
-) -> List[DataFormatSpecification]:
+) -> list[DataFormatSpecification]:
     return [
         DataFormatSpecification.from_xml_element(data_format_specification_elm)
         for data_format_specification_elm in data_format_specifications_elm.iterchildren(
@@ -157,7 +164,7 @@ def _load_data_format_specifications(
     ]
 
 
-def _load_sensors(sensors_elm) -> List[Sensor]:
+def _load_sensors(sensors_elm) -> list[Sensor]:
     return [
         Sensor.from_xml_element(sensor_elm)
         for sensor_elm in sensors_elm.iterchildren(tag="Sensor")
@@ -165,7 +172,7 @@ def _load_sensors(sensors_elm) -> List[Sensor]:
 
 
 def _load_pitch_dimensions(
-    metadata_elm, sensors: List[Sensor]
+    metadata_elm, sensors: list[Sensor]
 ) -> Union[None, PitchDimensions]:
     normalized = False
     for sensor in sensors:
@@ -178,17 +185,17 @@ def _load_pitch_dimensions(
     field_size_elm = field_size_path.find(metadata_elm).find("FieldSize")
 
     if field_size_elm is not None and normalized:
-        return PitchDimensions(
+        return NormalizedPitchDimensions(
             x_dim=Dimension(0, 1),
             y_dim=Dimension(0, 1),
-            length=int(field_size_elm.find("Width")),
-            width=int(field_size_elm.find("Height")),
+            pitch_length=int(field_size_elm.find("Width")),
+            pitch_width=int(field_size_elm.find("Height")),
         )
     else:
         return None
 
 
-def _parse_provider(provider_name: Union[str, None]) -> Provider:
+def _parse_provider(provider_name: Union[str, None]) -> Optional[Provider]:
     if provider_name:
         if provider_name == "Metrica Sports":
             return Provider.METRICA
@@ -201,14 +208,16 @@ def _parse_provider(provider_name: Union[str, None]) -> Provider:
         return None
 
 
-def _load_provider(metadata_elm, provider: Provider = None) -> Provider:
+def _load_provider(
+    metadata_elm, provider: Optional[Provider] = None
+) -> Optional[Provider]:
     provider_path = objectify.ObjectPath("Metadata.GlobalConfig.ProviderName")
     provider_name = provider_path.find(metadata_elm)
     provider_from_file = _parse_provider(provider_name)
     if provider:
         if provider_from_file and provider_from_file != provider:
             warnings.warn(
-                f"Given provider name is different to the name of the Provider read from the XML-file",
+                "Given provider name is different to the name of the Provider read from the XML-file",
                 Warning,
             )
     else:
@@ -217,7 +226,7 @@ def _load_provider(metadata_elm, provider: Provider = None) -> Provider:
 
 
 def load_metadata(
-    metadata_file: IO[bytes], provider: Provider = None
+    metadata_file: IO[bytes], provider: Optional[Provider] = None
 ) -> EPTSMetadata:
     root = objectify.fromstring(metadata_file.read())
     metadata = root.find("Metadata")
@@ -273,9 +282,7 @@ def load_metadata(
     }
 
     _all_players = [
-        player
-        for key, value in teams_metadata.items()
-        for player in value.players
+        player for value in teams_metadata.values() for player in value.players
     ]
 
     _player_map = {player.player_id: player for player in _all_players}
@@ -293,30 +300,27 @@ def load_metadata(
 
     frame_rate = int(metadata.find("GlobalConfig").find("FrameRate"))
     pitch_dimensions = _load_pitch_dimensions(metadata, sensors)
-    periods = _load_periods(metadata, _team_map, frame_rate)
-
-    if periods:
-        start_attacking_direction = periods[0].attacking_direction
-    else:
-        start_attacking_direction = None
-
-    orientation = (
-        (
-            Orientation.HOME_TEAM
-            if start_attacking_direction == AttackingDirection.HOME_AWAY
-            else Orientation.AWAY_TEAM
-        )
-        if start_attacking_direction != AttackingDirection.NOT_SET
-        else Orientation.NOT_SET
+    periods, start_attacking_direction = _load_periods(
+        metadata, _team_map, frame_rate
     )
 
-    metadata.orientation = orientation
+    if start_attacking_direction != AttackingDirection.NOT_SET:
+        orientation = (
+            Orientation.HOME_AWAY
+            if start_attacking_direction == AttackingDirection.LTR
+            else Orientation.AWAY_HOME
+        )
+    else:
+        warnings.warn(
+            "Could not determine orientation of dataset, defaulting to NOT_SET"
+        )
+        orientation = Orientation.NOT_SET
 
     if provider and pitch_dimensions:
         from_coordinate_system = build_coordinate_system(
             provider,
-            length=pitch_dimensions.length,
-            width=pitch_dimensions.width,
+            pitch_length=pitch_dimensions.pitch_length,
+            pitch_width=pitch_dimensions.pitch_width,
         )
     else:
         from_coordinate_system = None

@@ -1,18 +1,18 @@
+from datetime import timedelta
 import logging
-from typing import Union, IO, NamedTuple
+from typing import IO, NamedTuple, Union
 
-from lxml import objectify, etree
-
+from lxml import etree, objectify
 
 from kloppy.domain import (
-    CodeDataset,
     Code,
-    Period,
-    Metadata,
-    Provider,
+    CodeDataset,
     DatasetFlag,
-    Score,
+    Metadata,
     Orientation,
+    Period,
+    Provider,
+    Score,
 )
 from kloppy.exceptions import SerializationError
 
@@ -45,24 +45,33 @@ class SportsCodeInputs(NamedTuple):
     data: IO[bytes]
 
 
+class SportsCodeOutputs(NamedTuple):
+    data: IO[bytes]
+
+
 class SportsCodeDeserializer(CodeDataDeserializer[SportsCodeInputs]):
     def deserialize(self, inputs: SportsCodeInputs) -> CodeDataset:
         all_instances = objectify.fromstring(inputs.data.read())
 
         codes = []
-        period = Period(id=1, start_timestamp=0, end_timestamp=0)
+        period = Period(
+            id=1,
+            start_timestamp=timedelta(seconds=0),
+            end_timestamp=timedelta(seconds=0),
+        )
         for instance in all_instances.ALL_INSTANCES.iterchildren():
-            end_timestamp = float(instance.end)
+            end_timestamp = timedelta(seconds=float(instance.end))
 
             code = Code(
                 period=period,
                 code_id=str(instance.ID),
                 code=str(instance.code),
-                timestamp=float(instance.start),
+                timestamp=timedelta(seconds=float(instance.start)),
                 end_timestamp=end_timestamp,
                 labels=parse_labels(instance),
                 ball_state=None,
                 ball_owning_team=None,
+                statistics=[],
             )
             period.end_timestamp = end_timestamp
             codes.append(code)
@@ -83,12 +92,14 @@ class SportsCodeDeserializer(CodeDataDeserializer[SportsCodeInputs]):
         )
 
 
-class SportsCodeSerializer(CodeDataSerializer):
-    def serialize(self, dataset: CodeDataset) -> bytes:
+class SportsCodeSerializer(CodeDataSerializer[SportsCodeOutputs]):
+    def serialize(
+        self, dataset: CodeDataset, outputs: SportsCodeOutputs
+    ) -> bool:
         root = etree.Element("file")
         all_instances = etree.SubElement(root, "ALL_INSTANCES")
         for i, code in enumerate(dataset.codes):
-            relative_period_start = 0
+            relative_period_start = timedelta(seconds=0)
             for period in dataset.metadata.periods:
                 if period == code.period:
                     break
@@ -100,10 +111,16 @@ class SportsCodeSerializer(CodeDataSerializer):
             id_.text = code.code_id or str(i + 1)
 
             start = etree.SubElement(instance, "start")
-            start.text = str(relative_period_start + code.start_timestamp)
+            start.text = str(
+                relative_period_start.total_seconds()
+                + code.start_timestamp.total_seconds()
+            )
 
             end = etree.SubElement(instance, "end")
-            end.text = str(relative_period_start + code.end_timestamp)
+            end.text = str(
+                relative_period_start.total_seconds()
+                + code.end_timestamp.total_seconds()
+            )
 
             code_ = etree.SubElement(instance, "code")
             code_.text = code.code
@@ -127,10 +144,12 @@ class SportsCodeSerializer(CodeDataSerializer):
                     text_ = etree.SubElement(label, "text")
                     text_.text = str(text)
 
-        return etree.tostring(
-            root,
-            pretty_print=True,
-            xml_declaration=True,
-            encoding="utf-8",  # This might not work with some tools because they expected 'ascii'.
-            method="xml",
+        outputs.data.write(
+            etree.tostring(
+                root,
+                pretty_print=True,
+                xml_declaration=True,
+                encoding="utf-8",  # This might not work with some tools because they expected 'ascii'.
+                method="xml",
+            )
         )

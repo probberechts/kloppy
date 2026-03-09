@@ -1,21 +1,20 @@
+from collections.abc import Iterator
+from datetime import timedelta
 import re
-from typing import List, Tuple, Set, Iterator, IO
-
-from kloppy.utils import Readable
+from typing import IO
 
 from .models import (
-    PlayerChannel,
     DataFormatSpecification,
     EPTSMetadata,
-    Channel,
+    PlayerChannel,
     Sensor,
 )
 
 
 def build_regex(
     data_format_specification: DataFormatSpecification,
-    player_channels: List[PlayerChannel],
-    sensors: List[Sensor],
+    player_channels: list[PlayerChannel],
+    sensors: list[Sensor],
 ) -> str:
     player_channel_map = {
         player_channel.player_channel_id: player_channel
@@ -30,18 +29,21 @@ def build_regex(
 
     return data_format_specification.to_regex(
         player_channel_map=player_channel_map,
-        ball_channel_map={
-            channel.channel_id: channel for channel in position_sensor.channels
-        }
-        if position_sensor
-        else {},
+        ball_channel_map=(
+            {
+                channel.channel_id: channel
+                for channel in position_sensor.channels
+            }
+            if position_sensor
+            else {}
+        ),
     )
 
 
 def read_raw_data(
     raw_data: IO[bytes],
     metadata: EPTSMetadata,
-    sensor_ids: List[str] = None,
+    sensor_ids: list[str] = None,
     sample_rate: float = 1.0,
     limit: int = 0,
 ) -> Iterator[dict]:
@@ -92,7 +94,7 @@ def read_raw_data(
         }
         frame_id = int(row[frame_name])
         if frame_id <= end_frame_id:
-            timestamp = frame_id / metadata.frame_rate
+            timestamp = timedelta(seconds=frame_id / metadata.frame_rate)
 
             del row[frame_name]
             row["frame_id"] = frame_id
@@ -102,6 +104,7 @@ def read_raw_data(
             for period in periods:
                 if period.start_timestamp <= timestamp <= period.end_timestamp:
                     row["period_id"] = period.id
+                    row["timestamp"] -= period.start_timestamp
                     break
 
             yield row
