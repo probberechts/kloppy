@@ -4,6 +4,9 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+    exclude-paths:
+      - "requirements-dev.txt"
+      - "requirements-docs.txt"
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
