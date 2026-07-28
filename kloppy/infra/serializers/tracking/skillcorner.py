@@ -138,31 +138,35 @@ class SkillCornerDeserializer(TrackingDataDeserializer[SkillCornerInputs]):
                 group_name = "referee"
                 continue  # Skip Referee Coords
 
-            if group_name is None:
+            player = None
+            if trackable_object is not None:
+                # Resolve team group name from known player ID mapping
                 group_name = teamdict.get(
-                    player_id_to_team_dict.get(trackable_object)
+                    player_id_to_team_dict.get(trackable_object), group_name
                 )
 
-                if group_name == "home_team":
-                    player = players["HOME"][trackable_object]
-                elif group_name == "away_team":
-                    player = players["AWAY"][trackable_object]
+            ground = {
+                "home_team": "HOME",
+                "home team": "HOME",
+                "away_team": "AWAY",
+                "away team": "AWAY",
+            }.get(group_name)
 
-            if trackable_object is None:
-                player_id = str(track_id)
-                if group_name == "home team":
-                    if f"anon_{player_id}" not in anon_players["HOME"].keys():
-                        player = cls.__create_anon_player(teams, frame_record)
-                        anon_players["HOME"][f"anon_home_{player_id}"] = player
-                    else:
-                        player = anon_players["HOME"][f"anon_home_{player_id}"]
+            if ground:
+                if trackable_object is not None:
+                    # Look up known player by trackable object ID
+                    player = players[ground].get(trackable_object)
+                else:
+                    # Anonymous or unmapped player track; create or reuse an anonymous Player object cached per team ground
+                    player_key = f"anon_{ground.lower()}_{track_id}"
+                    if player_key not in anon_players[ground]:
+                        anon_players[ground][player_key] = (
+                            cls.__create_anon_player(teams, frame_record)
+                        )
+                    player = anon_players[ground][player_key]
 
-                elif group_name == "away team":
-                    if f"anon_{player_id}" not in anon_players["AWAY"].keys():
-                        player = cls.__create_anon_player(teams, frame_record)
-                        anon_players["AWAY"][f"anon_away_{player_id}"] = player
-                    else:
-                        player = anon_players["AWAY"][f"anon_away_{player_id}"]
+            if player is None:
+                continue
 
             players_data[player] = PlayerData(coordinates=Point(x, y))
 
